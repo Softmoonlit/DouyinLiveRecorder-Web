@@ -200,7 +200,8 @@ LIVE_STREAM_CONFIG = {
         "func": spider.get_migu_stream_url,
     },
     "laixiu": {
-        "url": "https://www.imkktv.com/h5/share/video.html?uid=1845195&roomId=1710496",
+        "url": "https://www.imkktv.com/h5/share/video.html?uid=1845195&roomId=1780486",
+        # "url": "https://www.imkktv.com/h5/share/video.html?uid=1845195&roomId=1705776",
         "func": spider.get_laixiu_stream_url,
     },
     "picarto": {
@@ -223,5 +224,5 @@ def test_live_stream(platform_name: str, proxy_addr=None, cookies=None) -> None:
 
 
 if __name__ == "__main__":
-    platform = "douyin"
+    platform = "laixiu"
     test_live_stream(platform)
