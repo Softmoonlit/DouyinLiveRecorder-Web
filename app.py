@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -18,6 +19,7 @@ INDEX_FILE = BASE_DIR / "index.html"
 
 app = FastAPI(title="DouyinLiveRecorder API", version="0.1.0")
 manager = RuntimeApiManager(URL_CONFIG_PATH)
+logger = logging.getLogger(__name__)
 
 
 def _normalize_task_id(task_id: str) -> str:
@@ -45,6 +47,17 @@ class TaskUpdateRequest(BaseModel):
 @app.on_event("startup")
 def on_startup() -> None:
     manager.bootstrap()
+
+
+@app.on_event("shutdown")
+def on_shutdown() -> None:
+    result = manager.shutdown(timeout=15.0)
+    logger.info(
+        "runtime shutdown requested=%s stopped=%s failed=%s",
+        result.get("requested", 0),
+        result.get("stopped", 0),
+        result.get("failed", 0),
+    )
 
 
 @app.get("/health")

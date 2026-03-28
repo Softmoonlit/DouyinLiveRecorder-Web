@@ -194,6 +194,27 @@ class RuntimeApiManager:
                 self._repo.set_task_enabled(task_id, True, default_quality=self._default_quality)
             return self._get_task_view(task_id)
 
+    def shutdown(self, *, timeout: float = 10.0) -> dict[str, int]:
+        """Stop all enabled runtime tasks during process shutdown."""
+        with self._lock:
+            snapshot = self._state.get_snapshot()
+            active_ids = [task_id for task_id, task in snapshot.items() if bool(task.get("enabled"))]
+
+        stopped = 0
+        failed = 0
+        for task_id in active_ids:
+            try:
+                self._state.stop_task(task_id=task_id, timeout=timeout, disable=False)
+                stopped += 1
+            except Exception:
+                failed += 1
+
+        return {
+            "requested": len(active_ids),
+            "stopped": stopped,
+            "failed": failed,
+        }
+
     def _refresh_from_file(self, *, force: bool) -> bool:
         with self._lock:
             path = self._repo.file_path
