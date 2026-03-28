@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from threading import Event, Thread
 from urllib.parse import unquote
 
 from fastapi import FastAPI, HTTPException, Query
@@ -9,16 +10,21 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from src.runtime import RuntimeApiManager
+from src.runtime import LiveStatusProbe, RuntimeApiManager
 
 
 BASE_DIR = Path(__file__).resolve().parent
 URL_CONFIG_PATH = BASE_DIR / "config" / "URL_config.ini"
+CONFIG_PATH = BASE_DIR / "config" / "config.ini"
 INDEX_FILE = BASE_DIR / "index.html"
+PROBE_INTERVAL_SECONDS = 8.0
 
 
 app = FastAPI(title="DouyinLiveRecorder API", version="0.1.0")
 manager = RuntimeApiManager(URL_CONFIG_PATH)
+probe_service = LiveStatusProbe(CONFIG_PATH)
+probe_stop_event = Event()
+probe_thread: Thread | None = None
 logger = logging.getLogger(__name__)
 
 
@@ -44,13 +50,57 @@ class TaskUpdateRequest(BaseModel):
     enabled: bool | None = None
 
 
+def _probe_task_state(task: dict | None) -> dict | None:
+    if not task:
+        return task
+
+    task_id = str(task.get("task_id") or "").strip()
+    task_url = str(task.get("url") or "").strip()
+    task_quality = str(task.get("quality") or "原画").strip()
+    if not task_id or not task_url or not bool(task.get("enabled", False)):
+        return task
+
+    probe_result = probe_service.probe(task_url, task_quality)
+    updated = manager.apply_probe_result(
+        task_id,
+        is_live=probe_result.is_live,
+        anchor_name=probe_result.anchor_name,
+        error=probe_result.error,
+    )
+    return updated or task
+
+
+def _run_probe_cycle() -> None:
+    for item in manager.list_tasks():
+        _probe_task_state(item)
+
+
+def _probe_loop() -> None:
+    while not probe_stop_event.wait(PROBE_INTERVAL_SECONDS):
+        try:
+            _run_probe_cycle()
+        except Exception:  # pragma: no cover - background runtime path
+            logger.exception("live probe cycle failed")
+
+
 @app.on_event("startup")
 def on_startup() -> None:
+    global probe_thread
     manager.bootstrap()
+    _run_probe_cycle()
+    probe_stop_event.clear()
+    probe_thread = Thread(target=_probe_loop, name="live-status-probe", daemon=True)
+    probe_thread.start()
 
 
 @app.on_event("shutdown")
 def on_shutdown() -> None:
+    global probe_thread
+    probe_stop_event.set()
+    if probe_thread and probe_thread.is_alive():
+        probe_thread.join(timeout=3.0)
+    probe_thread = None
+
     result = manager.shutdown(timeout=15.0)
     logger.info(
         "runtime shutdown requested=%s stopped=%s failed=%s",
@@ -81,6 +131,7 @@ def create_task(payload: TaskCreateRequest) -> dict:
         quality=payload.quality,
         anchor_name=payload.anchor_name,
     )
+    item = _probe_task_state(item)
     return {"item": item}
 
 
@@ -96,6 +147,7 @@ def update_task(task_id: str, payload: TaskUpdateRequest) -> dict:
     )
     if item is None:
         raise HTTPException(status_code=404, detail="task not found")
+    item = _probe_task_state(item)
     return {"item": item}
 
 
@@ -114,6 +166,7 @@ def start_task(task_id: str) -> dict:
     item = manager.start_task(normalized_task_id)
     if item is None:
         raise HTTPException(status_code=404, detail="task not found")
+    item = _probe_task_state(item)
     return {"item": item}
 
 

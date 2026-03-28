@@ -194,6 +194,49 @@ class RuntimeApiManager:
                 self._repo.set_task_enabled(task_id, True, default_quality=self._default_quality)
             return self._get_task_view(task_id)
 
+    def apply_probe_result(
+        self,
+        task_id: str,
+        *,
+        is_live: bool | None,
+        anchor_name: str = "",
+        error: str = "",
+    ) -> dict | None:
+        with self._lock:
+            snapshot = self._state.get_snapshot().get(task_id)
+            if snapshot is None:
+                return None
+
+            current_state = str(snapshot.get("state") or "")
+            if current_state in {"recording", "stopping"}:
+                return self._get_task_view(task_id)
+
+            current_url = str(snapshot.get("url") or task_id)
+            current_quality = str(snapshot.get("quality") or self._default_quality)
+            current_anchor = str(snapshot.get("anchor_name") or "")
+
+            if anchor_name and anchor_name != current_anchor:
+                self._state.upsert_task(
+                    task_id,
+                    url=current_url,
+                    quality=current_quality,
+                    anchor_name=anchor_name,
+                )
+
+            if error:
+                self._state.mark_failed(task_id, error)
+                return self._get_task_view(task_id)
+
+            if is_live is True:
+                self._state.mark_live_not_recording(task_id)
+                return self._get_task_view(task_id)
+
+            if is_live is False:
+                self._state.mark_monitoring(task_id)
+                return self._get_task_view(task_id)
+
+            return self._get_task_view(task_id)
+
     def shutdown(self, *, timeout: float = 10.0) -> dict[str, int]:
         """Stop all enabled runtime tasks during process shutdown."""
         with self._lock:

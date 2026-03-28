@@ -72,6 +72,7 @@ class RuntimeStateService:
             task = self._get_or_create_task(task_id)
             if task.enabled:
                 task.state = TaskState.MONITORING
+                task.last_error = ""
                 self._touch(task)
 
     def mark_live_not_recording(self, task_id: str) -> None:
@@ -79,6 +80,7 @@ class RuntimeStateService:
             task = self._get_or_create_task(task_id)
             if task.enabled:
                 task.state = TaskState.LIVE_NOT_RECORDING
+                task.last_error = ""
                 self._touch(task)
 
     def mark_recording(self, task_id: str) -> None:
@@ -86,6 +88,7 @@ class RuntimeStateService:
             task = self._get_or_create_task(task_id)
             if task.enabled:
                 task.state = TaskState.RECORDING
+                task.last_error = ""
                 if task.started_recording_at is None:
                     task.started_recording_at = time.time()
                 self._touch(task)
