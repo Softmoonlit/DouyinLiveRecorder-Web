@@ -43,8 +43,12 @@ def health() -> dict[str, str]:
 
 
 @app.get("/api/v1/tasks")
-def list_tasks() -> dict[str, list[dict]]:
-    return {"items": manager.list_tasks()}
+def list_tasks(platform: str | None = Query(default=None)) -> dict[str, list[dict]]:
+    items = manager.list_tasks()
+    if platform:
+        target = platform.strip().lower()
+        items = [item for item in items if str(item.get("platform", "")).lower() == target]
+    return {"items": items}
 
 
 @app.post("/api/v1/tasks")
@@ -98,6 +102,11 @@ def stop_task(task_id: str, disable: bool = Query(default=False)) -> dict:
 @app.get("/api/v1/summary")
 def get_summary() -> dict:
     return manager.get_summary()
+
+
+@app.get("/api/v1/dashboard")
+def get_dashboard(platform: str | None = Query(default=None)) -> dict:
+    return manager.get_dashboard(platform=platform)
 
 
 if INDEX_FILE.exists():
