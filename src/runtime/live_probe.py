@@ -28,6 +28,9 @@ class LiveProbeResult:
     is_live: bool | None
     anchor_name: str = ""
     error: str = ""
+    record_url: str = ""
+    platform: str = ""
+    title: str = ""
 
 
 class LiveStatusProbe:
@@ -59,7 +62,7 @@ class LiveStatusProbe:
             if "douyin.com/" in url_value:
                 with self._semaphore:
                     if "v.douyin.com" not in url_value and "/user/" not in url_value:
-                        json_data = asyncio.run(
+                        json_data = self._run_async(
                             spider.get_douyin_stream_data(
                                 url=url_value,
                                 proxy_addr=proxy_address,
@@ -67,15 +70,17 @@ class LiveStatusProbe:
                             )
                         )
                     else:
-                        json_data = asyncio.run(
+                        json_data = self._run_async(
                             spider.get_douyin_app_stream_data(
                                 url=url_value,
                                 proxy_addr=proxy_address,
                                 cookies=self._cookies.get("douyin", ""),
                             )
                         )
-                    port_info = asyncio.run(stream.get_douyin_stream_url(json_data, quality_code, proxy_address))
-                return self._to_result(port_info)
+                    port_info = self._run_async(
+                        stream.get_douyin_stream_url(json_data, quality_code, proxy_address)
+                    )
+                return self._to_result(port_info, platform="douyin")
 
             if "tiktok.com/" in url_value:
                 if not proxy_address:
@@ -85,32 +90,34 @@ class LiveStatusProbe:
                         error="",
                     )
                 with self._semaphore:
-                    json_data = asyncio.run(
+                    json_data = self._run_async(
                         spider.get_tiktok_stream_data(
                             url=url_value,
                             proxy_addr=proxy_address,
                             cookies=self._cookies.get("tiktok", ""),
                         )
                     )
-                    port_info = asyncio.run(stream.get_tiktok_stream_url(json_data, quality_code, proxy_address))
-                return self._to_result(port_info)
+                    port_info = self._run_async(
+                        stream.get_tiktok_stream_url(json_data, quality_code, proxy_address)
+                    )
+                return self._to_result(port_info, platform="tiktok")
 
             if "live.kuaishou.com/" in url_value:
                 with self._semaphore:
-                    json_data = asyncio.run(
+                    json_data = self._run_async(
                         spider.get_kuaishou_stream_data(
                             url=url_value,
                             proxy_addr=proxy_address,
                             cookies=self._cookies.get("kuaishou", ""),
                         )
                     )
-                    port_info = asyncio.run(stream.get_kuaishou_stream_url(json_data, quality_code))
-                return self._to_result(port_info)
+                    port_info = self._run_async(stream.get_kuaishou_stream_url(json_data, quality_code))
+                return self._to_result(port_info, platform="kuaishou")
 
             if "www.huya.com/" in url_value:
                 with self._semaphore:
                     if quality_code in {"OD", "BD", "UHD"}:
-                        port_info = asyncio.run(
+                        port_info = self._run_async(
                             spider.get_huya_app_stream_url(
                                 url=url_value,
                                 proxy_addr=proxy_address,
@@ -118,26 +125,26 @@ class LiveStatusProbe:
                             )
                         )
                     else:
-                        json_data = asyncio.run(
+                        json_data = self._run_async(
                             spider.get_huya_stream_data(
                                 url=url_value,
                                 proxy_addr=proxy_address,
                                 cookies=self._cookies.get("huya", ""),
                             )
                         )
-                        port_info = asyncio.run(stream.get_huya_stream_url(json_data, quality_code))
-                return self._to_result(port_info)
+                        port_info = self._run_async(stream.get_huya_stream_url(json_data, quality_code))
+                    return self._to_result(port_info, platform="huya")
 
             if "www.douyu.com/" in url_value:
                 with self._semaphore:
-                    json_data = asyncio.run(
+                    json_data = self._run_async(
                         spider.get_douyu_info_data(
                             url=url_value,
                             proxy_addr=proxy_address,
                             cookies=self._cookies.get("douyu", ""),
                         )
                     )
-                    port_info = asyncio.run(
+                    port_info = self._run_async(
                         stream.get_douyu_stream_url(
                             json_data,
                             video_quality=quality_code,
@@ -145,18 +152,18 @@ class LiveStatusProbe:
                             proxy_addr=proxy_address,
                         )
                     )
-                return self._to_result(port_info)
+                return self._to_result(port_info, platform="douyu")
 
             if "live.bilibili.com/" in url_value:
                 with self._semaphore:
-                    json_data = asyncio.run(
+                    json_data = self._run_async(
                         spider.get_bilibili_room_info(
                             url=url_value,
                             proxy_addr=proxy_address,
                             cookies=self._cookies.get("bilibili", ""),
                         )
                     )
-                    port_info = asyncio.run(
+                    port_info = self._run_async(
                         stream.get_bilibili_stream_url(
                             json_data,
                             video_quality=quality_code,
@@ -164,26 +171,56 @@ class LiveStatusProbe:
                             proxy_addr=proxy_address,
                         )
                     )
-                return self._to_result(port_info)
+                return self._to_result(port_info, platform="bilibili")
 
             if "xhslink.com/" in url_value or "xiaohongshu.com/" in url_value:
                 with self._semaphore:
-                    port_info = asyncio.run(
+                    port_info = self._run_async(
                         spider.get_xhs_stream_url(
                             url_value,
                             proxy_addr=proxy_address,
                             cookies=self._cookies.get("xiaohongshu", ""),
                         )
                     )
-                return self._to_result(port_info)
+                return self._to_result(port_info, platform="xiaohongshu")
 
             if ".m3u8" in url_value or ".flv" in url_value:
-                return LiveProbeResult(supported=True, is_live=True, anchor_name="自定义录制直播")
+                return LiveProbeResult(
+                    supported=True,
+                    is_live=True,
+                    anchor_name="自定义录制直播",
+                    record_url=url_value,
+                    platform="custom",
+                )
 
             return LiveProbeResult(supported=False, is_live=None)
         except Exception as exc:  # pragma: no cover - runtime network path
             logger.warning("probe failed for %s: %s", url_value, exc)
             return LiveProbeResult(supported=True, is_live=None, error=str(exc))
+
+    @staticmethod
+    def _run_async(coro):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+
+        result_holder: dict[str, object] = {}
+        error_holder: dict[str, Exception] = {}
+
+        def _runner() -> None:
+            try:
+                result_holder["value"] = asyncio.run(coro)
+            except Exception as exc:  # pragma: no cover - runtime async path
+                error_holder["error"] = exc
+
+        worker = threading.Thread(target=_runner, daemon=True)
+        worker.start()
+        worker.join()
+
+        if "error" in error_holder:
+            raise error_holder["error"]
+        return result_holder.get("value")
 
     def _reload_config(self, *, force: bool = False) -> None:
         with self._lock:
@@ -220,7 +257,7 @@ class LiveStatusProbe:
             return default
 
     @staticmethod
-    def _to_result(port_info: object) -> LiveProbeResult:
+    def _to_result(port_info: object, *, platform: str) -> LiveProbeResult:
         if not isinstance(port_info, dict):
             return LiveProbeResult(supported=True, is_live=None, error="invalid probe response")
 
@@ -233,4 +270,19 @@ class LiveStatusProbe:
         else:
             is_live = None
 
-        return LiveProbeResult(supported=True, is_live=is_live, anchor_name=anchor_name)
+        record_url = str(
+            port_info.get("record_url")
+            or port_info.get("flv_url")
+            or port_info.get("m3u8_url")
+            or ""
+        )
+        title = str(port_info.get("title") or "")
+
+        return LiveProbeResult(
+            supported=True,
+            is_live=is_live,
+            anchor_name=anchor_name,
+            record_url=record_url,
+            platform=platform,
+            title=title,
+        )

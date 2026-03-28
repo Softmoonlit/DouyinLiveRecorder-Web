@@ -53,12 +53,21 @@ api() {
   fi
 }
 
-assert_json() {
+encode_url() {
+  local raw_url="$1"
+  TEST_URL="$raw_url" python3 - <<'PY'
+import os
+import urllib.parse
+
+print(urllib.parse.quote(os.environ["TEST_URL"], safe=""))
+PY
+}
+
+json_match() {
   local json_payload="$1"
   local python_expr="$2"
-  local error_message="$3"
 
-  if ! JSON_PAYLOAD="$json_payload" PY_EXPR="$python_expr" python3 - <<'PY'
+  JSON_PAYLOAD="$json_payload" PY_EXPR="$python_expr" python3 - <<'PY'
 import json
 import os
 import sys
@@ -69,21 +78,48 @@ obj = json.loads(payload)
 if not bool(eval(expr, {}, {"obj": obj})):
     sys.exit(1)
 PY
-  then
+}
+
+assert_json() {
+  local json_payload="$1"
+  local python_expr="$2"
+  local error_message="$3"
+
+  if ! json_match "$json_payload" "$python_expr"; then
     echo "[ERROR] ${error_message}"
     echo "[DEBUG] payload: ${json_payload}"
     exit 1
   fi
 }
 
+wait_task_recording() {
+  local target_url="$1"
+  local timeout_sec="${2:-120}"
+  local interval_sec=2
+  local loops=$((timeout_sec / interval_sec))
+  local i
+  local payload=""
+
+  for ((i = 1; i <= loops; i++)); do
+    payload="$(api GET /api/v1/tasks)"
+    if json_match "$payload" "any(item.get('url') == '${target_url}' and item.get('recording_status') == 'recording' and bool(item.get('started_at')) for item in obj.get('items', []))"; then
+      return 0
+    fi
+    sleep "$interval_sec"
+  done
+
+  echo "[ERROR] live recording status timeout for ${target_url}"
+  echo "[DEBUG] payload: ${payload}"
+  return 1
+}
+
 TEST_SUFFIX="$(date +%s)"
 TEST_URL="https://live.douyin.com/phase4-${TEST_SUFFIX}"
-ENCODED_TEST_URL="$(TEST_URL="$TEST_URL" python3 - <<'PY'
-import os
-import urllib.parse
-print(urllib.parse.quote(os.environ["TEST_URL"], safe=""))
-PY
-)"
+ENCODED_TEST_URL="$(encode_url "$TEST_URL")"
+
+LIVE_TEST_URL="${LIVE_TEST_URL:-}"
+LIVE_TEST_QUALITY="${LIVE_TEST_QUALITY:-原画}"
+LIVE_TEST_TIMEOUT="${LIVE_TEST_TIMEOUT:-120}"
 
 echo "[INFO] Phase 4 baseline started"
 echo "[INFO] Test URL: ${TEST_URL}"
@@ -161,6 +197,25 @@ fi
 
 dc up -d app
 wait_health
+
+if [[ -n "$LIVE_TEST_URL" ]]; then
+  echo "[STEP] Optional live recording validation"
+  LIVE_ENCODED_URL="$(encode_url "$LIVE_TEST_URL")"
+
+  LIVE_CREATE_RESP="$(api POST /api/v1/tasks "{\"url\":\"${LIVE_TEST_URL}\",\"quality\":\"${LIVE_TEST_QUALITY}\",\"anchor_name\":\"phase4-live-check\"}")"
+  assert_json "$LIVE_CREATE_RESP" "obj.get('item', {}).get('url') == '${LIVE_TEST_URL}'" "live create task failed"
+
+  LIVE_START_RESP="$(api POST /api/v1/tasks/${LIVE_ENCODED_URL}/start)"
+  assert_json "$LIVE_START_RESP" "obj.get('record_started') is True" "live start did not enter recording"
+
+  wait_task_recording "$LIVE_TEST_URL" "$LIVE_TEST_TIMEOUT"
+
+  LIVE_STOP_RESP="$(api POST /api/v1/tasks/${LIVE_ENCODED_URL}/stop?disable=true)"
+  assert_json "$LIVE_STOP_RESP" "obj.get('item', {}).get('enabled') is False" "live stop disable=true failed"
+
+  LIVE_DELETE_RESP="$(api DELETE /api/v1/tasks/${LIVE_ENCODED_URL})"
+  assert_json "$LIVE_DELETE_RESP" "obj.get('deleted') is True" "live delete task failed"
+fi
 
 echo "[STEP] Delete task"
 DELETE_RESP="$(api DELETE /api/v1/tasks/${ENCODED_TEST_URL})"

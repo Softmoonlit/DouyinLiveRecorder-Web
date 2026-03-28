@@ -10,12 +10,13 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from src.runtime import LiveStatusProbe, RuntimeApiManager
+from src.runtime import FfmpegRecordingService, LiveStatusProbe, RuntimeApiManager
 
 
 BASE_DIR = Path(__file__).resolve().parent
 URL_CONFIG_PATH = BASE_DIR / "config" / "URL_config.ini"
 CONFIG_PATH = BASE_DIR / "config" / "config.ini"
+DOWNLOADS_PATH = BASE_DIR / "downloads"
 INDEX_FILE = BASE_DIR / "index.html"
 PROBE_INTERVAL_SECONDS = 8.0
 
@@ -23,6 +24,7 @@ PROBE_INTERVAL_SECONDS = 8.0
 app = FastAPI(title="DouyinLiveRecorder API", version="0.1.0")
 manager = RuntimeApiManager(URL_CONFIG_PATH)
 probe_service = LiveStatusProbe(CONFIG_PATH)
+recorder_service = FfmpegRecordingService(CONFIG_PATH, default_download_root=DOWNLOADS_PATH)
 probe_stop_event = Event()
 probe_thread: Thread | None = None
 logger = logging.getLogger(__name__)
@@ -73,6 +75,72 @@ def _probe_task_state(task: dict | None) -> dict | None:
 def _run_probe_cycle() -> None:
     for item in manager.list_tasks():
         _probe_task_state(item)
+
+
+def _watch_recording_process(task_id: str, process) -> None:
+    try:
+        return_code = process.wait()
+    except Exception as exc:  # pragma: no cover - subprocess path
+        logger.exception("recording watcher failed for %s", task_id)
+        manager.mark_task_failed(task_id, f"recording watcher failed: {exc}")
+        manager.complete_recording_process(task_id, return_code=1)
+        return
+
+    manager.complete_recording_process(task_id, return_code=return_code)
+
+
+def _start_recording_if_live(task: dict | None) -> tuple[dict | None, bool, str]:
+    if not task:
+        return task, False, "task not found"
+
+    task_id = str(task.get("task_id") or "").strip()
+    task_url = str(task.get("url") or "").strip()
+    task_quality = str(task.get("quality") or "原画").strip()
+    if not task_id or not task_url:
+        return task, False, "invalid task metadata"
+
+    if str(task.get("recording_status") or "") == "recording":
+        return task, False, "task is already recording"
+
+    probe_result = probe_service.probe(task_url, task_quality)
+    updated = manager.apply_probe_result(
+        task_id,
+        is_live=probe_result.is_live,
+        anchor_name=probe_result.anchor_name,
+        error=probe_result.error,
+    )
+    current_task = updated or task
+
+    if not probe_result.supported:
+        return current_task, False, "unsupported platform for manual recording start"
+    if probe_result.error:
+        return current_task, False, probe_result.error
+    if probe_result.is_live is not True:
+        return current_task, False, "room is not live"
+
+    start_result = recorder_service.start_recording(current_task, probe_result)
+    if not start_result.started or start_result.process is None:
+        failed_task = manager.mark_task_failed(task_id, start_result.message) or current_task
+        return failed_task, False, start_result.message
+
+    if not manager.bind_recording_process(task_id, start_result.process):
+        try:
+            if start_result.process.poll() is None:
+                start_result.process.terminate()
+        except Exception:
+            logger.exception("failed to terminate unbound recording process for %s", task_id)
+        failed_task = manager.mark_task_failed(task_id, "bind recording process failed") or current_task
+        return failed_task, False, "bind recording process failed"
+
+    watcher = Thread(
+        target=_watch_recording_process,
+        args=(task_id, start_result.process),
+        name=f"recording-watch-{task_id[:24]}",
+        daemon=True,
+    )
+    watcher.start()
+
+    return manager.get_task(task_id), True, start_result.output_file
 
 
 def _probe_loop() -> None:
@@ -166,8 +234,12 @@ def start_task(task_id: str) -> dict:
     item = manager.start_task(normalized_task_id)
     if item is None:
         raise HTTPException(status_code=404, detail="task not found")
-    item = _probe_task_state(item)
-    return {"item": item}
+    item, record_started, message = _start_recording_if_live(item)
+    return {
+        "item": item,
+        "record_started": record_started,
+        "message": message,
+    }
 
 
 @app.post("/api/v1/tasks/{task_id:path}/stop")

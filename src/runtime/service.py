@@ -54,6 +54,7 @@ class RuntimeStateService:
     def bind_process(self, task_id: str, process) -> None:
         with self._lock:
             handle = self._handles.setdefault(task_id, TaskHandle())
+            handle.reset_stop_flag()
             handle.process = process
 
     def unbind_process(self, task_id: str) -> None:
@@ -73,6 +74,7 @@ class RuntimeStateService:
             if task.enabled:
                 task.state = TaskState.MONITORING
                 task.last_error = ""
+                task.started_recording_at = None
                 self._touch(task)
 
     def mark_live_not_recording(self, task_id: str) -> None:
@@ -81,6 +83,7 @@ class RuntimeStateService:
             if task.enabled:
                 task.state = TaskState.LIVE_NOT_RECORDING
                 task.last_error = ""
+                task.started_recording_at = None
                 self._touch(task)
 
     def mark_recording(self, task_id: str) -> None:

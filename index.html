@@ -820,7 +820,10 @@
 
             try {
                 if (action === "start") {
-                    await apiRequest(`/api/v1/tasks/${encodeURIComponent(taskId)}/start`, { method: "POST" });
+                    const payload = await apiRequest(`/api/v1/tasks/${encodeURIComponent(taskId)}/start`, { method: "POST" });
+                    if (payload && payload.record_started === false && payload.message) {
+                        alert(`手动开始未进入录制: ${payload.message}`);
+                    }
                 }
 
                 if (action === "stop") {
@@ -832,7 +835,10 @@
                 }
 
                 if (action === "enable") {
-                    await apiRequest(`/api/v1/tasks/${encodeURIComponent(taskId)}/start`, { method: "POST" });
+                    const payload = await apiRequest(`/api/v1/tasks/${encodeURIComponent(taskId)}/start`, { method: "POST" });
+                    if (payload && payload.record_started === false && payload.message) {
+                        alert(`恢复任务未进入录制: ${payload.message}`);
+                    }
                 }
 
                 if (action === "delete") {

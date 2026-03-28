@@ -173,6 +173,49 @@ class RuntimeApiManager:
             self._state.mark_monitoring(task_id)
             return self._get_task_view(task_id)
 
+    def get_task(self, task_id: str) -> dict | None:
+        self.refresh_if_changed()
+        with self._lock:
+            return self._get_task_view(task_id)
+
+    def bind_recording_process(self, task_id: str, process) -> bool:
+        with self._lock:
+            snapshot = self._state.get_snapshot().get(task_id)
+            if snapshot is None or not bool(snapshot.get("enabled", False)):
+                return False
+
+            # Reset stale stop flags from previous sessions before binding a new process.
+            self._state.bind_monitor_thread(task_id, None)
+            self._state.bind_process(task_id, process)
+            self._state.mark_recording(task_id)
+            return True
+
+    def complete_recording_process(self, task_id: str, return_code: int) -> dict | None:
+        with self._lock:
+            task = self._state.get_task(task_id)
+            if task is None:
+                self._state.unbind_process(task_id)
+                return None
+
+            requested_stop = self._state.should_stop(task_id)
+            self._state.unbind_process(task_id)
+
+            if not task.enabled:
+                self._state.disable_task(task_id)
+            elif requested_stop or return_code == 0:
+                self._state.mark_monitoring(task_id)
+            else:
+                self._state.mark_failed(task_id, f"ffmpeg exited with code {return_code}")
+
+            return self._get_task_view(task_id)
+
+    def mark_task_failed(self, task_id: str, error: str) -> dict | None:
+        with self._lock:
+            if self._state.get_task(task_id) is None:
+                return None
+            self._state.mark_failed(task_id, error)
+            return self._get_task_view(task_id)
+
     def stop_task(self, task_id: str, *, disable: bool = False) -> dict | None:
         with self._lock:
             exists = self._state.get_task(task_id) is not None
