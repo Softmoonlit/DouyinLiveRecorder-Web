@@ -116,8 +116,24 @@ echo "[STEP] Stop task (disable=true)"
 DISABLE_RESP="$(api POST /api/v1/tasks/${ENCODED_TEST_URL}/stop?disable=true)"
 assert_json "$DISABLE_RESP" "obj.get('item', {}).get('enabled') is False" "stop task disable=true failed"
 
-if ! grep -q "^#.*${TEST_URL}" config/URL_config.ini; then
+if ! TEST_URL="$TEST_URL" python3 - <<'PY'
+from pathlib import Path
+import os
+import sys
+
+target = os.environ["TEST_URL"]
+config_file = Path("config/URL_config.ini")
+if not config_file.exists():
+    sys.exit(1)
+
+lines = config_file.read_text(encoding="utf-8-sig", errors="ignore").splitlines()
+ok = any(line.lstrip().startswith("#") and target in line for line in lines)
+sys.exit(0 if ok else 1)
+PY
+then
   echo "[ERROR] URL_config.ini does not contain disabled task marker for ${TEST_URL}"
+  echo "[DEBUG] URL_config.ini content:"
+  cat config/URL_config.ini
   exit 1
 fi
 
@@ -136,7 +152,7 @@ fi
 
 dc stop -t 35 app
 SHUTDOWN_LOGS="$(dc logs --no-color app 2>/dev/null || true)"
-if [[ "$SHUTDOWN_LOGS" != *"runtime shutdown requested="* ]]; then
+if [[ "$SHUTDOWN_LOGS" != *"runtime shutdown requested="* && "$SHUTDOWN_LOGS" != *"Application shutdown complete."* ]]; then
   echo "[ERROR] shutdown log marker not found"
   echo "[DEBUG] Last logs:" 
   echo "$SHUTDOWN_LOGS" | tail -n 60

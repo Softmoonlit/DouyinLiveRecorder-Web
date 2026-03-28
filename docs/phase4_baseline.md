@@ -16,6 +16,12 @@ This baseline validates:
 
 ## Run
 
+If image naming conflicts on your server, set a custom image name first:
+
+1. export DOUYIN_RECORDER_IMAGE=your-registry-or-local-name:phase4
+
+Then run baseline:
+
 1. chmod +x scripts/phase4_baseline.sh
 2. ./scripts/phase4_baseline.sh
 

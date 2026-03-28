@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: douyin-live-recorder:phase4
+    image: ${DOUYIN_RECORDER_IMAGE:-douyin-live-recorder-web:phase4-local}
     ports:
       - "8000:8000"
     environment:
