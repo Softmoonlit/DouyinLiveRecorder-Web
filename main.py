@@ -1,4 +1,4 @@
-# -*- encoding: utf-8 -*-
+﻿# -*- encoding: utf-8 -*-
 
 """
 Author: Hmily
@@ -31,7 +31,7 @@ from src import spider, stream
 from src.proxy import ProxyDetector
 from src.utils import logger
 from src import utils
-from src.runtime import RuntimeStateService
+from src.runtime import ProbeResult, RecordingFlowService, RuntimeStateService
 from msg_push import (
     dingtalk, xizhi, tg_bot, send_email, bark, ntfy, pushplus
 )
@@ -565,6 +565,886 @@ def select_source_url(link, stream_info):
     return stream_info.get('record_url')
 
 
+
+def probe_live_stream(record_url: str, record_quality: str, proxy_address: str | None, use_global_proxy: bool) -> ProbeResult:
+    platform = '未知平台'
+    new_record_url = ''
+    port_info = {}
+    if record_url.find("douyin.com/") > -1:
+        platform = '抖音直播'
+        with semaphore:
+            if 'v.douyin.com' not in record_url and '/user/' not in record_url:
+                json_data = asyncio.run(spider.get_douyin_stream_data(
+                    url=record_url,
+                    proxy_addr=proxy_address,
+                    cookies=dy_cookie))
+            else:
+                json_data = asyncio.run(spider.get_douyin_app_stream_data(
+                    url=record_url,
+                    proxy_addr=proxy_address,
+                    cookies=dy_cookie))
+            port_info = asyncio.run(
+                stream.get_douyin_stream_url(json_data, record_quality, proxy_address))
+
+    elif record_url.find("https://www.tiktok.com/") > -1:
+        platform = 'TikTok直播'
+        with semaphore:
+            if use_global_proxy or proxy_address:
+                json_data = asyncio.run(spider.get_tiktok_stream_data(
+                    url=record_url,
+                    proxy_addr=proxy_address,
+                    cookies=tiktok_cookie))
+                port_info = asyncio.run(
+                    stream.get_tiktok_stream_url(json_data, record_quality, proxy_address))
+            else:
+                logger.error("错误信息: 网络异常，请检查网络是否能正常访问TikTok平台")
+
+    elif record_url.find("https://live.kuaishou.com/") > -1:
+        platform = '快手直播'
+        with semaphore:
+            json_data = asyncio.run(spider.get_kuaishou_stream_data(
+                url=record_url,
+                proxy_addr=proxy_address,
+                cookies=ks_cookie))
+            port_info = asyncio.run(stream.get_kuaishou_stream_url(json_data, record_quality))
+
+    elif record_url.find("https://www.huya.com/") > -1:
+        platform = '虎牙直播'
+        with semaphore:
+            if record_quality not in ['OD', 'BD', 'UHD']:
+                json_data = asyncio.run(spider.get_huya_stream_data(
+                    url=record_url,
+                    proxy_addr=proxy_address,
+                    cookies=hy_cookie))
+                port_info = asyncio.run(stream.get_huya_stream_url(json_data, record_quality))
+            else:
+                port_info = asyncio.run(spider.get_huya_app_stream_url(
+                    url=record_url,
+                    proxy_addr=proxy_address,
+                    cookies=hy_cookie
+                ))
+
+    elif record_url.find("https://www.douyu.com/") > -1:
+        platform = '斗鱼直播'
+        with semaphore:
+            json_data = asyncio.run(spider.get_douyu_info_data(
+                url=record_url, proxy_addr=proxy_address, cookies=douyu_cookie))
+            port_info = asyncio.run(stream.get_douyu_stream_url(
+                json_data, video_quality=record_quality, cookies=douyu_cookie, proxy_addr=proxy_address
+            ))
+
+    elif record_url.find("https://www.yy.com/") > -1:
+        platform = 'YY直播'
+        with semaphore:
+            json_data = asyncio.run(spider.get_yy_stream_data(
+                url=record_url, proxy_addr=proxy_address, cookies=yy_cookie))
+            port_info = asyncio.run(stream.get_yy_stream_url(json_data))
+
+    elif record_url.find("https://live.bilibili.com/") > -1:
+        platform = 'B站直播'
+        with semaphore:
+            json_data = asyncio.run(spider.get_bilibili_room_info(
+                url=record_url, proxy_addr=proxy_address, cookies=bili_cookie))
+            port_info = asyncio.run(stream.get_bilibili_stream_url(
+                json_data, video_quality=record_quality, cookies=bili_cookie, proxy_addr=proxy_address))
+
+    elif record_url.find("http://xhslink.com/") > -1 or \
+            record_url.find("https://www.xiaohongshu.com/") > -1:
+        platform = '小红书直播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_xhs_stream_url(
+                record_url, proxy_addr=proxy_address, cookies=xhs_cookie))
+
+    elif record_url.find("https://www.bigo.tv/") > -1 or record_url.find("slink.bigovideo.tv/") > -1:
+        platform = 'Bigo直播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_bigo_stream_url(
+                record_url, proxy_addr=proxy_address, cookies=bigo_cookie))
+
+    elif record_url.find("https://app.blued.cn/") > -1:
+        platform = 'Blued直播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_blued_stream_url(
+                record_url, proxy_addr=proxy_address, cookies=blued_cookie))
+
+    elif record_url.find("sooplive.co.kr/") > -1:
+        platform = 'SOOP'
+        with semaphore:
+            if use_global_proxy or proxy_address:
+                json_data = asyncio.run(spider.get_sooplive_stream_data(
+                    url=record_url, proxy_addr=proxy_address,
+                    cookies=sooplive_cookie,
+                    username=sooplive_username,
+                    password=sooplive_password
+                ))
+                if json_data and json_data.get('new_cookies'):
+                    utils.update_config(
+                        config_file, 'Cookie', 'sooplive_cookie', json_data['new_cookies']
+                    )
+                port_info = asyncio.run(stream.get_stream_url(json_data, record_quality, spec=True))
+            else:
+                logger.error("错误信息: 网络异常，请检查本网络是否能正常访问SOOP平台")
+
+    elif record_url.find("cc.163.com/") > -1:
+        platform = '网易CC直播'
+        with semaphore:
+            json_data = asyncio.run(spider.get_netease_stream_data(
+                url=record_url, cookies=netease_cookie))
+            port_info = asyncio.run(stream.get_netease_stream_url(json_data, record_quality))
+
+    elif record_url.find("qiandurebo.com/") > -1:
+        platform = '千度热播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_qiandurebo_stream_data(
+                url=record_url, proxy_addr=proxy_address, cookies=qiandurebo_cookie))
+
+    elif record_url.find("www.pandalive.co.kr/") > -1:
+        platform = 'PandaTV'
+        with semaphore:
+            if use_global_proxy or proxy_address:
+                json_data = asyncio.run(spider.get_pandatv_stream_data(
+                    url=record_url,
+                    proxy_addr=proxy_address,
+                    cookies=pandatv_cookie
+                ))
+                port_info = asyncio.run(stream.get_stream_url(json_data, record_quality, spec=True))
+            else:
+                logger.error("错误信息: 网络异常，请检查本网络是否能正常访问PandaTV直播平台")
+
+    elif record_url.find("fm.missevan.com/") > -1:
+        platform = '猫耳FM直播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_maoerfm_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=maoerfm_cookie))
+
+    elif record_url.find("www.winktv.co.kr/") > -1:
+        platform = 'WinkTV'
+        with semaphore:
+            if use_global_proxy or proxy_address:
+                json_data = asyncio.run(spider.get_winktv_stream_data(
+                    url=record_url,
+                    proxy_addr=proxy_address,
+                    cookies=winktv_cookie))
+                port_info = asyncio.run(stream.get_stream_url(json_data, record_quality, spec=True))
+            else:
+                logger.error("错误信息: 网络异常，请检查本网络是否能正常访问WinkTV直播平台")
+
+    elif record_url.find("www.flextv.co.kr/") > -1 or record_url.find("www.ttinglive.com/") > -1:
+        platform = 'FlexTV'
+        with semaphore:
+            if use_global_proxy or proxy_address:
+                json_data = asyncio.run(spider.get_flextv_stream_data(
+                    url=record_url,
+                    proxy_addr=proxy_address,
+                    cookies=flextv_cookie,
+                    username=flextv_username,
+                    password=flextv_password
+                ))
+                if json_data and json_data.get('new_cookies'):
+                    utils.update_config(
+                        config_file, 'Cookie', 'flextv_cookie', json_data['new_cookies']
+                    )
+                if 'play_url_list' in json_data:
+                    port_info = asyncio.run(stream.get_stream_url(json_data, record_quality, spec=True))
+                else:
+                    port_info = json_data
+            else:
+                logger.error("错误信息: 网络异常，请检查本网络是否能正常访问FlexTV直播平台")
+
+    elif record_url.find("look.163.com/") > -1:
+        platform = 'Look直播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_looklive_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=look_cookie
+            ))
+
+    elif record_url.find("www.popkontv.com/") > -1:
+        platform = 'PopkonTV'
+        with semaphore:
+            if use_global_proxy or proxy_address:
+                port_info = asyncio.run(spider.get_popkontv_stream_url(
+                    url=record_url,
+                    proxy_addr=proxy_address,
+                    access_token=popkontv_access_token,
+                    username=popkontv_username,
+                    password=popkontv_password,
+                    partner_code=popkontv_partner_code
+                ))
+                if port_info and port_info.get('new_token'):
+                    utils.update_config(
+                        file_path=config_file, section='Authorization', key='popkontv_token',
+                        new_value=port_info['new_token']
+                    )
+
+            else:
+                logger.error("错误信息: 网络异常，请检查本网络是否能正常访问PopkonTV直播平台")
+
+    elif record_url.find("twitcasting.tv/") > -1:
+        platform = 'TwitCasting'
+        with semaphore:
+            json_data = asyncio.run(spider.get_twitcasting_stream_url(
+                url=record_url,
+                proxy_addr=proxy_address,
+                cookies=twitcasting_cookie,
+                account_type=twitcasting_account_type,
+                username=twitcasting_username,
+                password=twitcasting_password
+            ))
+            port_info = asyncio.run(stream.get_stream_url(json_data, record_quality, spec=False))
+
+            if port_info and port_info.get('new_cookies'):
+                utils.update_config(
+                    file_path=config_file, section='Cookie', key='twitcasting_cookie',
+                    new_value=port_info['new_cookies']
+                )
+
+    elif record_url.find("live.baidu.com/") > -1:
+        platform = '百度直播'
+        with semaphore:
+            json_data = asyncio.run(spider.get_baidu_stream_data(
+                url=record_url,
+                proxy_addr=proxy_address,
+                cookies=baidu_cookie))
+            port_info = asyncio.run(stream.get_stream_url(json_data, record_quality))
+
+    elif record_url.find("weibo.com/") > -1:
+        platform = '微博直播'
+        with semaphore:
+            json_data = asyncio.run(spider.get_weibo_stream_data(
+                url=record_url, proxy_addr=proxy_address, cookies=weibo_cookie))
+            port_info = asyncio.run(stream.get_stream_url(
+                json_data, record_quality, hls_extra_key='m3u8_url'))
+
+    elif record_url.find("kugou.com/") > -1:
+        platform = '酷狗直播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_kugou_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=kugou_cookie))
+
+    elif record_url.find("www.twitch.tv/") > -1:
+        platform = 'TwitchTV'
+        with semaphore:
+            if use_global_proxy or proxy_address:
+                json_data = asyncio.run(spider.get_twitchtv_stream_data(
+                    url=record_url,
+                    proxy_addr=proxy_address,
+                    cookies=twitch_cookie
+                ))
+                port_info = asyncio.run(stream.get_stream_url(json_data, record_quality, spec=True))
+            else:
+                logger.error("错误信息: 网络异常，请检查本网络是否能正常访问TwitchTV直播平台")
+
+    elif record_url.find("www.liveme.com/") > -1:
+        if use_global_proxy or proxy_address:
+            platform = 'LiveMe'
+            with semaphore:
+                port_info = asyncio.run(spider.get_liveme_stream_url(
+                    url=record_url, proxy_addr=proxy_address, cookies=liveme_cookie))
+        else:
+            logger.error("错误信息: 网络异常，请检查本网络是否能正常访问LiveMe直播平台")
+
+    elif record_url.find("www.huajiao.com/") > -1:
+        platform = '花椒直播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_huajiao_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=huajiao_cookie))
+
+    elif record_url.find("7u66.com/") > -1:
+        platform = '流星直播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_liuxing_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=liuxing_cookie))
+
+    elif record_url.find("showroom-live.com/") > -1:
+        platform = 'ShowRoom'
+        with semaphore:
+            json_data = asyncio.run(spider.get_showroom_stream_data(
+                url=record_url, proxy_addr=proxy_address, cookies=showroom_cookie))
+            port_info = asyncio.run(stream.get_stream_url(json_data, record_quality, spec=True))
+
+    elif record_url.find("live.acfun.cn/") > -1 or record_url.find("m.acfun.cn/") > -1:
+        platform = 'Acfun'
+        with semaphore:
+            json_data = asyncio.run(spider.get_acfun_stream_data(
+                url=record_url, proxy_addr=proxy_address, cookies=acfun_cookie))
+            port_info = asyncio.run(stream.get_stream_url(
+                json_data, record_quality, url_type='flv', flv_extra_key='url'))
+
+    elif record_url.find("live.tlclw.com/") > -1:
+        platform = '畅聊直播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_changliao_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=changliao_cookie))
+
+    elif record_url.find("ybw1666.com/") > -1:
+        platform = '音播直播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_yinbo_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=yinbo_cookie))
+
+    elif record_url.find("www.inke.cn/") > -1:
+        platform = '映客直播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_yingke_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=yingke_cookie))
+
+    elif record_url.find("www.zhihu.com/") > -1:
+        platform = '知乎直播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_zhihu_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=zhihu_cookie))
+
+    elif record_url.find("chzzk.naver.com/") > -1:
+        platform = 'CHZZK'
+        with semaphore:
+            json_data = asyncio.run(spider.get_chzzk_stream_data(
+                url=record_url, proxy_addr=proxy_address, cookies=chzzk_cookie))
+            port_info = asyncio.run(stream.get_stream_url(json_data, record_quality, spec=True))
+
+    elif record_url.find("www.haixiutv.com/") > -1:
+        platform = '嗨秀直播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_haixiu_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=haixiu_cookie))
+
+    elif record_url.find("vvxqiu.com/") > -1:
+        platform = 'VV星球'
+        with semaphore:
+            port_info = asyncio.run(spider.get_vvxqiu_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=vvxqiu_cookie))
+
+    elif record_url.find("17.live/") > -1:
+        platform = '17Live'
+        with semaphore:
+            port_info = asyncio.run(spider.get_17live_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=yiqilive_cookie))
+
+    elif record_url.find("www.lang.live/") > -1:
+        platform = '浪Live'
+        with semaphore:
+            port_info = asyncio.run(spider.get_langlive_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=langlive_cookie))
+
+    elif record_url.find("m.pp.weimipopo.com/") > -1:
+        platform = '漂漂直播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_pplive_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=pplive_cookie))
+
+    elif record_url.find(".6.cn/") > -1:
+        platform = '六间房直播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_6room_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=six_room_cookie))
+
+    elif record_url.find("lehaitv.com/") > -1:
+        platform = '乐嗨直播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_haixiu_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=lehaitv_cookie))
+
+    elif record_url.find("h.catshow168.com/") > -1:
+        platform = '花猫直播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_pplive_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=huamao_cookie))
+
+    elif record_url.find("live.shopee") > -1 or record_url.find("shp.ee/") > -1:
+        platform = 'shopee'
+        with semaphore:
+            port_info = asyncio.run(spider.get_shopee_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=shopee_cookie))
+            if port_info.get('uid'):
+                new_record_url = record_url.split('?')[0] + '?' + str(port_info['uid'])
+
+    elif record_url.find("www.youtube.com/") > -1 or record_url.find("youtu.be/") > -1:
+        platform = 'Youtube'
+        with semaphore:
+            json_data = asyncio.run(spider.get_youtube_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=youtube_cookie))
+            port_info = asyncio.run(stream.get_stream_url(json_data, record_quality, spec=True))
+
+    elif record_url.find("tb.cn") > -1:
+        platform = '淘宝直播'
+        with semaphore:
+            json_data = asyncio.run(spider.get_taobao_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=taobao_cookie))
+            port_info = asyncio.run(stream.get_stream_url(
+                json_data, record_quality,
+                url_type='all', hls_extra_key='hlsUrl', flv_extra_key='flvUrl'
+            ))
+
+    elif record_url.find("3.cn") > -1 or record_url.find("m.jd.com") > -1:
+        platform = '京东直播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_jd_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=jd_cookie))
+
+    elif record_url.find("faceit.com/") > -1:
+        platform = 'faceit'
+        with semaphore:
+            if use_global_proxy or proxy_address:
+                with semaphore:
+                    json_data = asyncio.run(spider.get_faceit_stream_data(
+                        url=record_url, proxy_addr=proxy_address, cookies=faceit_cookie))
+                    port_info = asyncio.run(stream.get_stream_url(json_data, record_quality, spec=True))
+            else:
+                logger.error("错误信息: 网络异常，请检查本网络是否能正常访问faceit直播平台")
+
+    elif record_url.find("www.miguvideo.com") > -1 or record_url.find("m.miguvideo.com") > -1:
+        platform = '咪咕直播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_migu_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=migu_cookie))
+
+    elif record_url.find("show.lailianjie.com") > -1:
+        platform = '连接直播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_lianjie_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=lianjie_cookie))
+
+    elif record_url.find("www.imkktv.com") > -1:
+        platform = '来秀直播'
+        with semaphore:
+            port_info = asyncio.run(spider.get_laixiu_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=laixiu_cookie))
+
+    elif record_url.find("www.picarto.tv") > -1:
+        platform = 'Picarto'
+        with semaphore:
+            port_info = asyncio.run(spider.get_picarto_stream_url(
+                url=record_url, proxy_addr=proxy_address, cookies=picarto_cookie))
+
+    elif record_url.find(".m3u8") > -1 or record_url.find(".flv") > -1:
+        platform = '自定义录制直播'
+        port_info = {
+            "anchor_name": platform + '_' + str(uuid.uuid4())[:8],
+            "is_live": True,
+            "record_url": record_url,
+        }
+        if '.flv' in record_url:
+            port_info['flv_url'] = record_url
+        else:
+            port_info['m3u8_url'] = record_url
+
+    else:
+        logger.error(f'{record_url} {platform}直播地址')
+        return ProbeResult(platform=platform, port_info={}, new_record_url=new_record_url)
+
+
+    return ProbeResult(platform=platform, port_info=port_info, new_record_url=new_record_url)
+
+
+def execute_recording_session(
+    record_name: str,
+    record_url: str,
+    anchor_name: str,
+    platform: str,
+    full_path: str,
+    title_in_name: str,
+    now: str,
+    record_quality_zh: str,
+    port_info: dict,
+    ffmpeg_command: list,
+    rec_info: str,
+) -> tuple[bool, bool]:
+    global error_count
+
+    record_finished = False
+    only_flv_record = False
+    only_flv_platform_list = ['shopee', '花椒直播']
+    if platform in only_flv_platform_list:
+        logger.debug(f"提示: {platform} 将强制使用FLV格式录制")
+        only_flv_record = True
+
+    only_audio_record = False
+    only_audio_platform_list = ['猫耳FM直播', 'Look直播']
+    if platform in only_audio_platform_list:
+        only_audio_record = True
+
+    record_save_type = video_save_type
+
+    if is_flv_preferred_platform(record_url) and port_info.get('flv_url'):
+        codec = utils.get_query_params(port_info['flv_url'], "codec")
+        if codec and codec[0] == 'h265':
+            logger.warning("FLV is not supported for h265 codec, use TS format instead")
+            record_save_type = "TS"
+
+    if only_audio_record or any(i in record_save_type for i in ['MP3', 'M4A']):
+        try:
+            now = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
+            extension = "mp3" if "m4a" not in record_save_type.lower() else "m4a"
+            name_format = "_%03d" if split_video_by_time else ""
+            save_file_path = (f"{full_path}/{anchor_name}_{title_in_name}{now}"
+                              f"{name_format}.{extension}")
+
+            if split_video_by_time:
+                print(f'\r{anchor_name} 准备开始录制音频: {save_file_path}')
+
+                if "MP3" in record_save_type:
+                    command = [
+                        "-map", "0:a",
+                        "-c:a", "libmp3lame",
+                        "-ab", "320k",
+                        "-f", "segment",
+                        "-segment_time", split_time,
+                        "-reset_timestamps", "1",
+                        save_file_path,
+                    ]
+                else:
+                    command = [
+                        "-map", "0:a",
+                        "-c:a", "aac",
+                        "-bsf:a", "aac_adtstoasc",
+                        "-ab", "320k",
+                        "-f", "segment",
+                        "-segment_time", split_time,
+                        "-segment_format", 'mpegts',
+                        "-reset_timestamps", "1",
+                        save_file_path,
+                    ]
+
+            else:
+                if "MP3" in record_save_type:
+                    command = [
+                        "-map", "0:a",
+                        "-c:a", "libmp3lame",
+                        "-ab", "320k",
+                        save_file_path,
+                    ]
+
+                else:
+                    command = [
+                        "-map", "0:a",
+                        "-c:a", "aac",
+                        "-bsf:a", "aac_adtstoasc",
+                        "-ab", "320k",
+                        "-movflags", "+faststart",
+                        save_file_path,
+                    ]
+
+            ffmpeg_command.extend(command)
+            comment_end = check_subprocess(
+                record_name,
+                record_url,
+                ffmpeg_command,
+                record_save_type,
+                custom_script
+            )
+            if comment_end:
+                return record_finished, True
+
+        except subprocess.CalledProcessError as e:
+            logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
+            with max_request_lock:
+                error_count += 1
+                error_window.append(1)
+
+    if only_flv_record:
+        logger.info(f"Use Direct Downloader to Download FLV Stream: {record_url}")
+        filename = anchor_name + f'_{title_in_name}' + now + '.flv'
+        save_file_path = f'{full_path}/{filename}'
+        print(f'{rec_info}/{filename}')
+
+        subs_file_path = save_file_path.rsplit('.', maxsplit=1)[0]
+        subs_thread_name = f'subs_{Path(subs_file_path).name}'
+        if create_time_file:
+            create_var[subs_thread_name] = threading.Thread(
+                target=generate_subtitles, args=(record_name, subs_file_path)
+            )
+            create_var[subs_thread_name].daemon = True
+            create_var[subs_thread_name].start()
+
+        try:
+            flv_url = port_info.get('flv_url')
+            if flv_url:
+                recording.add(record_name)
+                start_record_time = datetime.datetime.now()
+                recording_time_list[record_name] = [start_record_time, record_quality_zh]
+
+                download_success = direct_download_stream(
+                    flv_url, save_file_path, record_name, record_url, platform
+                )
+
+                if download_success:
+                    record_finished = True
+                    print(f"\n{anchor_name} {time.strftime('%Y-%m-%d %H:%M:%S')} 直播录制完成\n")
+
+                recording.discard(record_name)
+            else:
+                logger.debug("未找到FLV直播流，跳过录制")
+        except Exception as e:
+            clear_record_info(record_name, record_url)
+            color_obj.print_colored(
+                f"\n{anchor_name} {time.strftime('%Y-%m-%d %H:%M:%S')} 直播录制出错,请检查网络\n",
+                color_obj.RED)
+            logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
+            with max_request_lock:
+                error_count += 1
+                error_window.append(1)
+
+    elif record_save_type == "FLV":
+        filename = anchor_name + f'_{title_in_name}' + now + ".flv"
+        print(f'{rec_info}/{filename}')
+        save_file_path = full_path + '/' + filename
+
+        try:
+            if split_video_by_time:
+                now = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
+                save_file_path = f"{full_path}/{anchor_name}_{title_in_name}{now}_%03d.flv"
+                command = [
+                    "-map", "0",
+                    "-c:v", "copy",
+                    "-c:a", "copy",
+                    "-bsf:a", "aac_adtstoasc",
+                    "-f", "segment",
+                    "-segment_time", split_time,
+                    "-segment_format", "flv",
+                    "-reset_timestamps", "1",
+                    save_file_path
+                ]
+
+            else:
+                command = [
+                    "-map", "0",
+                    "-c:v", "copy",
+                    "-c:a", "copy",
+                    "-bsf:a", "aac_adtstoasc",
+                    "-f", "flv",
+                    "{path}".format(path=save_file_path),
+                ]
+            ffmpeg_command.extend(command)
+
+            comment_end = check_subprocess(
+                record_name,
+                record_url,
+                ffmpeg_command,
+                record_save_type,
+                custom_script
+            )
+            if comment_end:
+                return record_finished, True
+
+        except subprocess.CalledProcessError as e:
+            logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
+            with max_request_lock:
+                error_count += 1
+                error_window.append(1)
+
+        try:
+            if converts_to_mp4:
+                seg_file_path = f"{full_path}/{anchor_name}_{title_in_name}{now}_%03d.mp4"
+                if split_video_by_time:
+                    segment_video(
+                        save_file_path, seg_file_path,
+                        segment_format='mp4', segment_time=split_time,
+                        is_original_delete=delete_origin_file
+                    )
+                else:
+                    threading.Thread(
+                        target=converts_mp4,
+                        args=(save_file_path, delete_origin_file)
+                    ).start()
+
+            else:
+                seg_file_path = f"{full_path}/{anchor_name}_{title_in_name}{now}_%03d.flv"
+                if split_video_by_time:
+                    segment_video(
+                        save_file_path, seg_file_path,
+                        segment_format='flv', segment_time=split_time,
+                        is_original_delete=delete_origin_file
+                    )
+        except Exception as e:
+            logger.error(f"转码失败: {e} ")
+
+    elif record_save_type == "MKV":
+        filename = anchor_name + f'_{title_in_name}' + now + ".mkv"
+        print(f'{rec_info}/{filename}')
+        save_file_path = full_path + '/' + filename
+
+        try:
+            if split_video_by_time:
+                now = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
+                save_file_path = f"{full_path}/{anchor_name}_{title_in_name}{now}_%03d.mkv"
+                command = [
+                    "-flags", "global_header",
+                    "-c:v", "copy",
+                    "-c:a", "aac",
+                    "-map", "0",
+                    "-f", "segment",
+                    "-segment_time", split_time,
+                    "-segment_format", "matroska",
+                    "-reset_timestamps", "1",
+                    save_file_path,
+                ]
+
+            else:
+                command = [
+                    "-flags", "global_header",
+                    "-map", "0",
+                    "-c:v", "copy",
+                    "-c:a", "copy",
+                    "-f", "matroska",
+                    "{path}".format(path=save_file_path),
+                ]
+            ffmpeg_command.extend(command)
+
+            comment_end = check_subprocess(
+                record_name,
+                record_url,
+                ffmpeg_command,
+                record_save_type,
+                custom_script
+            )
+            if comment_end:
+                return record_finished, True
+
+        except subprocess.CalledProcessError as e:
+            logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
+            with max_request_lock:
+                error_count += 1
+                error_window.append(1)
+
+    elif record_save_type == "MP4":
+        filename = anchor_name + f'_{title_in_name}' + now + ".mp4"
+        print(f'{rec_info}/{filename}')
+        save_file_path = full_path + '/' + filename
+
+        try:
+            if split_video_by_time:
+                now = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
+                save_file_path = f"{full_path}/{anchor_name}_{title_in_name}{now}_%03d.mp4"
+                command = [
+                    "-c:v", "copy",
+                    "-c:a", "aac",
+                    "-map", "0",
+                    "-f", "segment",
+                    "-segment_time", split_time,
+                    "-segment_format", "mp4",
+                    "-reset_timestamps", "1",
+                    "-movflags", "+frag_keyframe+empty_moov",
+                    save_file_path,
+                ]
+
+            else:
+                command = [
+                    "-map", "0",
+                    "-c:v", "copy",
+                    "-c:a", "copy",
+                    "-f", "mp4",
+                    save_file_path,
+                ]
+
+            ffmpeg_command.extend(command)
+            comment_end = check_subprocess(
+                record_name,
+                record_url,
+                ffmpeg_command,
+                record_save_type,
+                custom_script
+            )
+            if comment_end:
+                return record_finished, True
+
+        except subprocess.CalledProcessError as e:
+            logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
+            with max_request_lock:
+                error_count += 1
+                error_window.append(1)
+
+    else:
+        if split_video_by_time:
+            now = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
+            filename = anchor_name + f'_{title_in_name}' + now + ".ts"
+            print(f'{rec_info}/{filename}')
+
+            try:
+                save_file_path = f"{full_path}/{anchor_name}_{title_in_name}{now}_%03d.ts"
+                command = [
+                    "-c:v", "copy",
+                    "-c:a", "copy",
+                    "-map", "0",
+                    "-f", "segment",
+                    "-segment_time", split_time,
+                    "-segment_format", 'mpegts',
+                    "-reset_timestamps", "1",
+                    save_file_path,
+                ]
+
+                ffmpeg_command.extend(command)
+                comment_end = check_subprocess(
+                    record_name,
+                    record_url,
+                    ffmpeg_command,
+                    record_save_type,
+                    custom_script
+                )
+                if comment_end:
+                    if converts_to_mp4:
+                        file_paths = utils.get_file_paths(os.path.dirname(save_file_path))
+                        prefix = os.path.basename(save_file_path).rsplit('_', maxsplit=1)[0]
+                        for path in file_paths:
+                            if prefix in path:
+                                try:
+                                    threading.Thread(
+                                        target=converts_mp4,
+                                        args=(path, delete_origin_file)
+                                    ).start()
+                                except subprocess.CalledProcessError as e:
+                                    logger.error(f"转码失败: {e} ")
+                    return record_finished, True
+
+            except subprocess.CalledProcessError as e:
+                logger.error(
+                    f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
+                with max_request_lock:
+                    error_count += 1
+                    error_window.append(1)
+
+        else:
+            filename = anchor_name + f'_{title_in_name}' + now + ".ts"
+            print(f'{rec_info}/{filename}')
+            save_file_path = full_path + '/' + filename
+
+            try:
+                command = [
+                    "-c:v", "copy",
+                    "-c:a", "copy",
+                    "-map", "0",
+                    "-f", "mpegts",
+                    save_file_path,
+                ]
+
+                ffmpeg_command.extend(command)
+                comment_end = check_subprocess(
+                    record_name,
+                    record_url,
+                    ffmpeg_command,
+                    record_save_type,
+                    custom_script
+                )
+                if comment_end:
+                    threading.Thread(
+                        target=converts_mp4, args=(save_file_path, delete_origin_file)
+                    ).start()
+                    return record_finished, True
+
+            except subprocess.CalledProcessError as e:
+                logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
+                with max_request_lock:
+                    error_count += 1
+                    error_window.append(1)
+
+    return record_finished, False
+
+
+recording_flow_service = RecordingFlowService(
+    probe_handler=probe_live_stream,
+    source_selector=select_source_url,
+    execute_handler=execute_recording_session,
+)
+
+
 def start_record(url_data: tuple, count_variable: int = -1) -> None:
     global error_count
 
@@ -603,468 +1483,15 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
             # print(f'\r全局代理:{global_proxy}')
             while True:
                 try:
-                    port_info = []
-                    if record_url.find("douyin.com/") > -1:
-                        platform = '抖音直播'
-                        with semaphore:
-                            if 'v.douyin.com' not in record_url and '/user/' not in record_url:
-                                json_data = asyncio.run(spider.get_douyin_stream_data(
-                                    url=record_url,
-                                    proxy_addr=proxy_address,
-                                    cookies=dy_cookie))
-                            else:
-                                json_data = asyncio.run(spider.get_douyin_app_stream_data(
-                                    url=record_url,
-                                    proxy_addr=proxy_address,
-                                    cookies=dy_cookie))
-                            port_info = asyncio.run(
-                                stream.get_douyin_stream_url(json_data, record_quality, proxy_address))
-
-                    elif record_url.find("https://www.tiktok.com/") > -1:
-                        platform = 'TikTok直播'
-                        with semaphore:
-                            if global_proxy or proxy_address:
-                                json_data = asyncio.run(spider.get_tiktok_stream_data(
-                                    url=record_url,
-                                    proxy_addr=proxy_address,
-                                    cookies=tiktok_cookie))
-                                port_info = asyncio.run(
-                                    stream.get_tiktok_stream_url(json_data, record_quality, proxy_address))
-                            else:
-                                logger.error("错误信息: 网络异常，请检查网络是否能正常访问TikTok平台")
-
-                    elif record_url.find("https://live.kuaishou.com/") > -1:
-                        platform = '快手直播'
-                        with semaphore:
-                            json_data = asyncio.run(spider.get_kuaishou_stream_data(
-                                url=record_url,
-                                proxy_addr=proxy_address,
-                                cookies=ks_cookie))
-                            port_info = asyncio.run(stream.get_kuaishou_stream_url(json_data, record_quality))
-
-                    elif record_url.find("https://www.huya.com/") > -1:
-                        platform = '虎牙直播'
-                        with semaphore:
-                            if record_quality not in ['OD', 'BD', 'UHD']:
-                                json_data = asyncio.run(spider.get_huya_stream_data(
-                                    url=record_url,
-                                    proxy_addr=proxy_address,
-                                    cookies=hy_cookie))
-                                port_info = asyncio.run(stream.get_huya_stream_url(json_data, record_quality))
-                            else:
-                                port_info = asyncio.run(spider.get_huya_app_stream_url(
-                                    url=record_url,
-                                    proxy_addr=proxy_address,
-                                    cookies=hy_cookie
-                                ))
-
-                    elif record_url.find("https://www.douyu.com/") > -1:
-                        platform = '斗鱼直播'
-                        with semaphore:
-                            json_data = asyncio.run(spider.get_douyu_info_data(
-                                url=record_url, proxy_addr=proxy_address, cookies=douyu_cookie))
-                            port_info = asyncio.run(stream.get_douyu_stream_url(
-                                json_data, video_quality=record_quality, cookies=douyu_cookie, proxy_addr=proxy_address
-                            ))
-
-                    elif record_url.find("https://www.yy.com/") > -1:
-                        platform = 'YY直播'
-                        with semaphore:
-                            json_data = asyncio.run(spider.get_yy_stream_data(
-                                url=record_url, proxy_addr=proxy_address, cookies=yy_cookie))
-                            port_info = asyncio.run(stream.get_yy_stream_url(json_data))
-
-                    elif record_url.find("https://live.bilibili.com/") > -1:
-                        platform = 'B站直播'
-                        with semaphore:
-                            json_data = asyncio.run(spider.get_bilibili_room_info(
-                                url=record_url, proxy_addr=proxy_address, cookies=bili_cookie))
-                            port_info = asyncio.run(stream.get_bilibili_stream_url(
-                                json_data, video_quality=record_quality, cookies=bili_cookie, proxy_addr=proxy_address))
-
-                    elif record_url.find("http://xhslink.com/") > -1 or \
-                            record_url.find("https://www.xiaohongshu.com/") > -1:
-                        platform = '小红书直播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_xhs_stream_url(
-                                record_url, proxy_addr=proxy_address, cookies=xhs_cookie))
-                            retry += 1
-
-                    elif record_url.find("https://www.bigo.tv/") > -1 or record_url.find("slink.bigovideo.tv/") > -1:
-                        platform = 'Bigo直播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_bigo_stream_url(
-                                record_url, proxy_addr=proxy_address, cookies=bigo_cookie))
-
-                    elif record_url.find("https://app.blued.cn/") > -1:
-                        platform = 'Blued直播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_blued_stream_url(
-                                record_url, proxy_addr=proxy_address, cookies=blued_cookie))
-
-                    elif record_url.find("sooplive.co.kr/") > -1:
-                        platform = 'SOOP'
-                        with semaphore:
-                            if global_proxy or proxy_address:
-                                json_data = asyncio.run(spider.get_sooplive_stream_data(
-                                    url=record_url, proxy_addr=proxy_address,
-                                    cookies=sooplive_cookie,
-                                    username=sooplive_username,
-                                    password=sooplive_password
-                                ))
-                                if json_data and json_data.get('new_cookies'):
-                                    utils.update_config(
-                                        config_file, 'Cookie', 'sooplive_cookie', json_data['new_cookies']
-                                    )
-                                port_info = asyncio.run(stream.get_stream_url(json_data, record_quality, spec=True))
-                            else:
-                                logger.error("错误信息: 网络异常，请检查本网络是否能正常访问SOOP平台")
-
-                    elif record_url.find("cc.163.com/") > -1:
-                        platform = '网易CC直播'
-                        with semaphore:
-                            json_data = asyncio.run(spider.get_netease_stream_data(
-                                url=record_url, cookies=netease_cookie))
-                            port_info = asyncio.run(stream.get_netease_stream_url(json_data, record_quality))
-
-                    elif record_url.find("qiandurebo.com/") > -1:
-                        platform = '千度热播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_qiandurebo_stream_data(
-                                url=record_url, proxy_addr=proxy_address, cookies=qiandurebo_cookie))
-
-                    elif record_url.find("www.pandalive.co.kr/") > -1:
-                        platform = 'PandaTV'
-                        with semaphore:
-                            if global_proxy or proxy_address:
-                                json_data = asyncio.run(spider.get_pandatv_stream_data(
-                                    url=record_url,
-                                    proxy_addr=proxy_address,
-                                    cookies=pandatv_cookie
-                                ))
-                                port_info = asyncio.run(stream.get_stream_url(json_data, record_quality, spec=True))
-                            else:
-                                logger.error("错误信息: 网络异常，请检查本网络是否能正常访问PandaTV直播平台")
-
-                    elif record_url.find("fm.missevan.com/") > -1:
-                        platform = '猫耳FM直播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_maoerfm_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=maoerfm_cookie))
-
-                    elif record_url.find("www.winktv.co.kr/") > -1:
-                        platform = 'WinkTV'
-                        with semaphore:
-                            if global_proxy or proxy_address:
-                                json_data = asyncio.run(spider.get_winktv_stream_data(
-                                    url=record_url,
-                                    proxy_addr=proxy_address,
-                                    cookies=winktv_cookie))
-                                port_info = asyncio.run(stream.get_stream_url(json_data, record_quality, spec=True))
-                            else:
-                                logger.error("错误信息: 网络异常，请检查本网络是否能正常访问WinkTV直播平台")
-
-                    elif record_url.find("www.flextv.co.kr/") > -1 or record_url.find("www.ttinglive.com/") > -1:
-                        platform = 'FlexTV'
-                        with semaphore:
-                            if global_proxy or proxy_address:
-                                json_data = asyncio.run(spider.get_flextv_stream_data(
-                                    url=record_url,
-                                    proxy_addr=proxy_address,
-                                    cookies=flextv_cookie,
-                                    username=flextv_username,
-                                    password=flextv_password
-                                ))
-                                if json_data and json_data.get('new_cookies'):
-                                    utils.update_config(
-                                        config_file, 'Cookie', 'flextv_cookie', json_data['new_cookies']
-                                    )
-                                if 'play_url_list' in json_data:
-                                    port_info = asyncio.run(stream.get_stream_url(json_data, record_quality, spec=True))
-                                else:
-                                    port_info = json_data
-                            else:
-                                logger.error("错误信息: 网络异常，请检查本网络是否能正常访问FlexTV直播平台")
-
-                    elif record_url.find("look.163.com/") > -1:
-                        platform = 'Look直播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_looklive_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=look_cookie
-                            ))
-
-                    elif record_url.find("www.popkontv.com/") > -1:
-                        platform = 'PopkonTV'
-                        with semaphore:
-                            if global_proxy or proxy_address:
-                                port_info = asyncio.run(spider.get_popkontv_stream_url(
-                                    url=record_url,
-                                    proxy_addr=proxy_address,
-                                    access_token=popkontv_access_token,
-                                    username=popkontv_username,
-                                    password=popkontv_password,
-                                    partner_code=popkontv_partner_code
-                                ))
-                                if port_info and port_info.get('new_token'):
-                                    utils.update_config(
-                                        file_path=config_file, section='Authorization', key='popkontv_token',
-                                        new_value=port_info['new_token']
-                                    )
-
-                            else:
-                                logger.error("错误信息: 网络异常，请检查本网络是否能正常访问PopkonTV直播平台")
-
-                    elif record_url.find("twitcasting.tv/") > -1:
-                        platform = 'TwitCasting'
-                        with semaphore:
-                            json_data = asyncio.run(spider.get_twitcasting_stream_url(
-                                url=record_url,
-                                proxy_addr=proxy_address,
-                                cookies=twitcasting_cookie,
-                                account_type=twitcasting_account_type,
-                                username=twitcasting_username,
-                                password=twitcasting_password
-                            ))
-                            port_info = asyncio.run(stream.get_stream_url(json_data, record_quality, spec=False))
-
-                            if port_info and port_info.get('new_cookies'):
-                                utils.update_config(
-                                    file_path=config_file, section='Cookie', key='twitcasting_cookie',
-                                    new_value=port_info['new_cookies']
-                                )
-
-                    elif record_url.find("live.baidu.com/") > -1:
-                        platform = '百度直播'
-                        with semaphore:
-                            json_data = asyncio.run(spider.get_baidu_stream_data(
-                                url=record_url,
-                                proxy_addr=proxy_address,
-                                cookies=baidu_cookie))
-                            port_info = asyncio.run(stream.get_stream_url(json_data, record_quality))
-
-                    elif record_url.find("weibo.com/") > -1:
-                        platform = '微博直播'
-                        with semaphore:
-                            json_data = asyncio.run(spider.get_weibo_stream_data(
-                                url=record_url, proxy_addr=proxy_address, cookies=weibo_cookie))
-                            port_info = asyncio.run(stream.get_stream_url(
-                                json_data, record_quality, hls_extra_key='m3u8_url'))
-
-                    elif record_url.find("kugou.com/") > -1:
-                        platform = '酷狗直播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_kugou_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=kugou_cookie))
-
-                    elif record_url.find("www.twitch.tv/") > -1:
-                        platform = 'TwitchTV'
-                        with semaphore:
-                            if global_proxy or proxy_address:
-                                json_data = asyncio.run(spider.get_twitchtv_stream_data(
-                                    url=record_url,
-                                    proxy_addr=proxy_address,
-                                    cookies=twitch_cookie
-                                ))
-                                port_info = asyncio.run(stream.get_stream_url(json_data, record_quality, spec=True))
-                            else:
-                                logger.error("错误信息: 网络异常，请检查本网络是否能正常访问TwitchTV直播平台")
-
-                    elif record_url.find("www.liveme.com/") > -1:
-                        if global_proxy or proxy_address:
-                            platform = 'LiveMe'
-                            with semaphore:
-                                port_info = asyncio.run(spider.get_liveme_stream_url(
-                                    url=record_url, proxy_addr=proxy_address, cookies=liveme_cookie))
-                        else:
-                            logger.error("错误信息: 网络异常，请检查本网络是否能正常访问LiveMe直播平台")
-
-                    elif record_url.find("www.huajiao.com/") > -1:
-                        platform = '花椒直播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_huajiao_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=huajiao_cookie))
-
-                    elif record_url.find("7u66.com/") > -1:
-                        platform = '流星直播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_liuxing_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=liuxing_cookie))
-
-                    elif record_url.find("showroom-live.com/") > -1:
-                        platform = 'ShowRoom'
-                        with semaphore:
-                            json_data = asyncio.run(spider.get_showroom_stream_data(
-                                url=record_url, proxy_addr=proxy_address, cookies=showroom_cookie))
-                            port_info = asyncio.run(stream.get_stream_url(json_data, record_quality, spec=True))
-
-                    elif record_url.find("live.acfun.cn/") > -1 or record_url.find("m.acfun.cn/") > -1:
-                        platform = 'Acfun'
-                        with semaphore:
-                            json_data = asyncio.run(spider.get_acfun_stream_data(
-                                url=record_url, proxy_addr=proxy_address, cookies=acfun_cookie))
-                            port_info = asyncio.run(stream.get_stream_url(
-                                json_data, record_quality, url_type='flv', flv_extra_key='url'))
-
-                    elif record_url.find("live.tlclw.com/") > -1:
-                        platform = '畅聊直播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_changliao_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=changliao_cookie))
-
-                    elif record_url.find("ybw1666.com/") > -1:
-                        platform = '音播直播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_yinbo_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=yinbo_cookie))
-
-                    elif record_url.find("www.inke.cn/") > -1:
-                        platform = '映客直播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_yingke_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=yingke_cookie))
-
-                    elif record_url.find("www.zhihu.com/") > -1:
-                        platform = '知乎直播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_zhihu_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=zhihu_cookie))
-
-                    elif record_url.find("chzzk.naver.com/") > -1:
-                        platform = 'CHZZK'
-                        with semaphore:
-                            json_data = asyncio.run(spider.get_chzzk_stream_data(
-                                url=record_url, proxy_addr=proxy_address, cookies=chzzk_cookie))
-                            port_info = asyncio.run(stream.get_stream_url(json_data, record_quality, spec=True))
-
-                    elif record_url.find("www.haixiutv.com/") > -1:
-                        platform = '嗨秀直播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_haixiu_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=haixiu_cookie))
-
-                    elif record_url.find("vvxqiu.com/") > -1:
-                        platform = 'VV星球'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_vvxqiu_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=vvxqiu_cookie))
-
-                    elif record_url.find("17.live/") > -1:
-                        platform = '17Live'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_17live_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=yiqilive_cookie))
-
-                    elif record_url.find("www.lang.live/") > -1:
-                        platform = '浪Live'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_langlive_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=langlive_cookie))
-
-                    elif record_url.find("m.pp.weimipopo.com/") > -1:
-                        platform = '漂漂直播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_pplive_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=pplive_cookie))
-
-                    elif record_url.find(".6.cn/") > -1:
-                        platform = '六间房直播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_6room_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=six_room_cookie))
-
-                    elif record_url.find("lehaitv.com/") > -1:
-                        platform = '乐嗨直播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_haixiu_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=lehaitv_cookie))
-
-                    elif record_url.find("h.catshow168.com/") > -1:
-                        platform = '花猫直播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_pplive_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=huamao_cookie))
-
-                    elif record_url.find("live.shopee") > -1 or record_url.find("shp.ee/") > -1:
-                        platform = 'shopee'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_shopee_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=shopee_cookie))
-                            if port_info.get('uid'):
-                                new_record_url = record_url.split('?')[0] + '?' + str(port_info['uid'])
-
-                    elif record_url.find("www.youtube.com/") > -1 or record_url.find("youtu.be/") > -1:
-                        platform = 'Youtube'
-                        with semaphore:
-                            json_data = asyncio.run(spider.get_youtube_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=youtube_cookie))
-                            port_info = asyncio.run(stream.get_stream_url(json_data, record_quality, spec=True))
-
-                    elif record_url.find("tb.cn") > -1:
-                        platform = '淘宝直播'
-                        with semaphore:
-                            json_data = asyncio.run(spider.get_taobao_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=taobao_cookie))
-                            port_info = asyncio.run(stream.get_stream_url(
-                                json_data, record_quality,
-                                url_type='all', hls_extra_key='hlsUrl', flv_extra_key='flvUrl'
-                            ))
-
-                    elif record_url.find("3.cn") > -1 or record_url.find("m.jd.com") > -1:
-                        platform = '京东直播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_jd_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=jd_cookie))
-
-                    elif record_url.find("faceit.com/") > -1:
-                        platform = 'faceit'
-                        with semaphore:
-                            if global_proxy or proxy_address:
-                                with semaphore:
-                                    json_data = asyncio.run(spider.get_faceit_stream_data(
-                                        url=record_url, proxy_addr=proxy_address, cookies=faceit_cookie))
-                                    port_info = asyncio.run(stream.get_stream_url(json_data, record_quality, spec=True))
-                            else:
-                                logger.error("错误信息: 网络异常，请检查本网络是否能正常访问faceit直播平台")
-
-                    elif record_url.find("www.miguvideo.com") > -1 or record_url.find("m.miguvideo.com") > -1:
-                        platform = '咪咕直播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_migu_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=migu_cookie))
-
-                    elif record_url.find("show.lailianjie.com") > -1:
-                        platform = '连接直播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_lianjie_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=lianjie_cookie))
-
-                    elif record_url.find("www.imkktv.com") > -1:
-                        platform = '来秀直播'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_laixiu_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=laixiu_cookie))
-
-                    elif record_url.find("www.picarto.tv") > -1:
-                        platform = 'Picarto'
-                        with semaphore:
-                            port_info = asyncio.run(spider.get_picarto_stream_url(
-                                url=record_url, proxy_addr=proxy_address, cookies=picarto_cookie))
-
-                    elif record_url.find(".m3u8") > -1 or record_url.find(".flv") > -1:
-                        platform = '自定义录制直播'
-                        port_info = {
-                            "anchor_name": platform + '_' + str(uuid.uuid4())[:8],
-                            "is_live": True,
-                            "record_url": record_url,
-                        }
-                        if '.flv' in record_url:
-                            port_info['flv_url'] = record_url
-                        else:
-                            port_info['m3u8_url'] = record_url
-
-                    else:
-                        logger.error(f'{record_url} {platform}直播地址')
-                        return
+                    probe_result = recording_flow_service.probe(
+                        record_url=record_url,
+                        record_quality=record_quality,
+                        proxy_address=proxy_address,
+                        global_proxy=global_proxy,
+                    )
+                    platform = probe_result.platform
+                    port_info = probe_result.port_info
+                    new_record_url = probe_result.new_record_url
 
                     if anchor_name:
                         if '主播:' in anchor_name:
@@ -1143,7 +1570,7 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                                 time.sleep(push_check_seconds)
                                 continue
 
-                            real_url = select_source_url(record_url, port_info)
+                            real_url = recording_flow_service.select_source(record_url, port_info)
                             full_path = f'{default_path}/{platform}'
                             if real_url:
                                 now = datetime.datetime.today().strftime("%Y-%m-%d_%H-%M-%S")
@@ -1246,389 +1673,21 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                                         logger.info(
                                             f"{platform} | {anchor_name} | 直播源地址: {real_url}")
 
-                                only_flv_record = False
-                                only_flv_platform_list = ['shopee', '花椒直播']
-                                if platform in only_flv_platform_list:
-                                    logger.debug(f"提示: {platform} 将强制使用FLV格式录制")
-                                    only_flv_record = True
-
-                                only_audio_record = False
-                                only_audio_platform_list = ['猫耳FM直播', 'Look直播']
-                                if platform in only_audio_platform_list:
-                                    only_audio_record = True
-
-                                record_save_type = video_save_type
-
-                                if is_flv_preferred_platform(record_url) and port_info.get('flv_url'):
-                                    codec = utils.get_query_params(port_info['flv_url'], "codec")
-                                    if codec and codec[0] == 'h265':
-                                        logger.warning("FLV is not supported for h265 codec, use TS format instead")
-                                        record_save_type = "TS"
-
-                                if only_audio_record or any(i in record_save_type for i in ['MP3', 'M4A']):
-                                    try:
-                                        now = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
-                                        extension = "mp3" if "m4a" not in record_save_type.lower() else "m4a"
-                                        name_format = "_%03d" if split_video_by_time else ""
-                                        save_file_path = (f"{full_path}/{anchor_name}_{title_in_name}{now}"
-                                                          f"{name_format}.{extension}")
-
-                                        if split_video_by_time:
-                                            print(f'\r{anchor_name} 准备开始录制音频: {save_file_path}')
-
-                                            if "MP3" in record_save_type:
-                                                command = [
-                                                    "-map", "0:a",
-                                                    "-c:a", "libmp3lame",
-                                                    "-ab", "320k",
-                                                    "-f", "segment",
-                                                    "-segment_time", split_time,
-                                                    "-reset_timestamps", "1",
-                                                    save_file_path,
-                                                ]
-                                            else:
-                                                command = [
-                                                    "-map", "0:a",
-                                                    "-c:a", "aac",
-                                                    "-bsf:a", "aac_adtstoasc",
-                                                    "-ab", "320k",
-                                                    "-f", "segment",
-                                                    "-segment_time", split_time,
-                                                    "-segment_format", 'mpegts',
-                                                    "-reset_timestamps", "1",
-                                                    save_file_path,
-                                                ]
-
-                                        else:
-                                            if "MP3" in record_save_type:
-                                                command = [
-                                                    "-map", "0:a",
-                                                    "-c:a", "libmp3lame",
-                                                    "-ab", "320k",
-                                                    save_file_path,
-                                                ]
-
-                                            else:
-                                                command = [
-                                                    "-map", "0:a",
-                                                    "-c:a", "aac",
-                                                    "-bsf:a", "aac_adtstoasc",
-                                                    "-ab", "320k",
-                                                    "-movflags", "+faststart",
-                                                    save_file_path,
-                                                ]
-
-                                        ffmpeg_command.extend(command)
-                                        comment_end = check_subprocess(
-                                            record_name,
-                                            record_url,
-                                            ffmpeg_command,
-                                            record_save_type,
-                                            custom_script
-                                        )
-                                        if comment_end:
-                                            return
-
-                                    except subprocess.CalledProcessError as e:
-                                        logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
-                                        with max_request_lock:
-                                            error_count += 1
-                                            error_window.append(1)
-
-                                if only_flv_record:
-                                    logger.info(f"Use Direct Downloader to Download FLV Stream: {record_url}")
-                                    filename = anchor_name + f'_{title_in_name}' + now + '.flv'
-                                    save_file_path = f'{full_path}/{filename}'
-                                    print(f'{rec_info}/{filename}')
-
-                                    subs_file_path = save_file_path.rsplit('.', maxsplit=1)[0]
-                                    subs_thread_name = f'subs_{Path(subs_file_path).name}'
-                                    if create_time_file:
-                                        create_var[subs_thread_name] = threading.Thread(
-                                            target=generate_subtitles, args=(record_name, subs_file_path)
-                                        )
-                                        create_var[subs_thread_name].daemon = True
-                                        create_var[subs_thread_name].start()
-
-                                    try:
-                                        flv_url = port_info.get('flv_url')
-                                        if flv_url:
-                                            recording.add(record_name)
-                                            start_record_time = datetime.datetime.now()
-                                            recording_time_list[record_name] = [start_record_time, record_quality_zh]
-                                            
-                                            download_success = direct_download_stream(
-                                                flv_url, save_file_path, record_name, record_url, platform
-                                            )
-                                            
-                                            if download_success:
-                                                record_finished = True
-                                                print(f"\n{anchor_name} {time.strftime('%Y-%m-%d %H:%M:%S')} 直播录制完成\n")
-                                            
-                                            recording.discard(record_name)
-                                        else:
-                                            logger.debug("未找到FLV直播流，跳过录制")
-                                    except Exception as e:
-                                        clear_record_info(record_name, record_url)
-                                        color_obj.print_colored(
-                                            f"\n{anchor_name} {time.strftime('%Y-%m-%d %H:%M:%S')} 直播录制出错,请检查网络\n",
-                                            color_obj.RED)
-                                        logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
-                                        with max_request_lock:
-                                            error_count += 1
-                                            error_window.append(1)
-
-                                elif record_save_type == "FLV":
-                                    filename = anchor_name + f'_{title_in_name}' + now + ".flv"
-                                    print(f'{rec_info}/{filename}')
-                                    save_file_path = full_path + '/' + filename
-
-                                    try:
-                                        if split_video_by_time:
-                                            now = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
-                                            save_file_path = f"{full_path}/{anchor_name}_{title_in_name}{now}_%03d.flv"
-                                            command = [
-                                                "-map", "0",
-                                                "-c:v", "copy",
-                                                "-c:a", "copy",
-                                                "-bsf:a", "aac_adtstoasc",
-                                                "-f", "segment",
-                                                "-segment_time", split_time,
-                                                "-segment_format", "flv",
-                                                "-reset_timestamps", "1",
-                                                save_file_path
-                                            ]
-
-                                        else:
-                                            command = [
-                                                "-map", "0",
-                                                "-c:v", "copy",
-                                                "-c:a", "copy",
-                                                "-bsf:a", "aac_adtstoasc",
-                                                "-f", "flv",
-                                                "{path}".format(path=save_file_path),
-                                            ]
-                                        ffmpeg_command.extend(command)
-
-                                        comment_end = check_subprocess(
-                                            record_name,
-                                            record_url,
-                                            ffmpeg_command,
-                                            record_save_type,
-                                            custom_script
-                                        )
-                                        if comment_end:
-                                            return
-
-                                    except subprocess.CalledProcessError as e:
-                                        logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
-                                        with max_request_lock:
-                                            error_count += 1
-                                            error_window.append(1)
-
-                                    try:
-                                        if converts_to_mp4:
-                                            seg_file_path = f"{full_path}/{anchor_name}_{title_in_name}{now}_%03d.mp4"
-                                            if split_video_by_time:
-                                                segment_video(
-                                                    save_file_path, seg_file_path,
-                                                    segment_format='mp4', segment_time=split_time,
-                                                    is_original_delete=delete_origin_file
-                                                )
-                                            else:
-                                                threading.Thread(
-                                                    target=converts_mp4,
-                                                    args=(save_file_path, delete_origin_file)
-                                                ).start()
-
-                                        else:
-                                            seg_file_path = f"{full_path}/{anchor_name}_{title_in_name}{now}_%03d.flv"
-                                            if split_video_by_time:
-                                                segment_video(
-                                                    save_file_path, seg_file_path,
-                                                    segment_format='flv', segment_time=split_time,
-                                                    is_original_delete=delete_origin_file
-                                                )
-                                    except Exception as e:
-                                        logger.error(f"转码失败: {e} ")
-
-                                elif record_save_type == "MKV":
-                                    filename = anchor_name + f'_{title_in_name}' + now + ".mkv"
-                                    print(f'{rec_info}/{filename}')
-                                    save_file_path = full_path + '/' + filename
-
-                                    try:
-                                        if split_video_by_time:
-                                            now = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
-                                            save_file_path = f"{full_path}/{anchor_name}_{title_in_name}{now}_%03d.mkv"
-                                            command = [
-                                                "-flags", "global_header",
-                                                "-c:v", "copy",
-                                                "-c:a", "aac",
-                                                "-map", "0",
-                                                "-f", "segment",
-                                                "-segment_time", split_time,
-                                                "-segment_format", "matroska",
-                                                "-reset_timestamps", "1",
-                                                save_file_path,
-                                            ]
-
-                                        else:
-                                            command = [
-                                                "-flags", "global_header",
-                                                "-map", "0",
-                                                "-c:v", "copy",
-                                                "-c:a", "copy",
-                                                "-f", "matroska",
-                                                "{path}".format(path=save_file_path),
-                                            ]
-                                        ffmpeg_command.extend(command)
-
-                                        comment_end = check_subprocess(
-                                            record_name,
-                                            record_url,
-                                            ffmpeg_command,
-                                            record_save_type,
-                                            custom_script
-                                        )
-                                        if comment_end:
-                                            return
-
-                                    except subprocess.CalledProcessError as e:
-                                        logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
-                                        with max_request_lock:
-                                            error_count += 1
-                                            error_window.append(1)
-
-                                elif record_save_type == "MP4":
-                                    filename = anchor_name + f'_{title_in_name}' + now + ".mp4"
-                                    print(f'{rec_info}/{filename}')
-                                    save_file_path = full_path + '/' + filename
-
-                                    try:
-                                        if split_video_by_time:
-                                            now = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
-                                            save_file_path = f"{full_path}/{anchor_name}_{title_in_name}{now}_%03d.mp4"
-                                            command = [
-                                                "-c:v", "copy",
-                                                "-c:a", "aac",
-                                                "-map", "0",
-                                                "-f", "segment",
-                                                "-segment_time", split_time,
-                                                "-segment_format", "mp4",
-                                                "-reset_timestamps", "1",
-                                                "-movflags", "+frag_keyframe+empty_moov",
-                                                save_file_path,
-                                            ]
-
-                                        else:
-                                            command = [
-                                                "-map", "0",
-                                                "-c:v", "copy",
-                                                "-c:a", "copy",
-                                                "-f", "mp4",
-                                                save_file_path,
-                                            ]
-
-                                        ffmpeg_command.extend(command)
-                                        comment_end = check_subprocess(
-                                            record_name,
-                                            record_url,
-                                            ffmpeg_command,
-                                            record_save_type,
-                                            custom_script
-                                        )
-                                        if comment_end:
-                                            return
-
-                                    except subprocess.CalledProcessError as e:
-                                        logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
-                                        with max_request_lock:
-                                            error_count += 1
-                                            error_window.append(1)
-
-                                else:
-                                    if split_video_by_time:
-                                        now = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
-                                        filename = anchor_name + f'_{title_in_name}' + now + ".ts"
-                                        print(f'{rec_info}/{filename}')
-
-                                        try:
-                                            save_file_path = f"{full_path}/{anchor_name}_{title_in_name}{now}_%03d.ts"
-                                            command = [
-                                                "-c:v", "copy",
-                                                "-c:a", "copy",
-                                                "-map", "0",
-                                                "-f", "segment",
-                                                "-segment_time", split_time,
-                                                "-segment_format", 'mpegts',
-                                                "-reset_timestamps", "1",
-                                                save_file_path,
-                                            ]
-
-                                            ffmpeg_command.extend(command)
-                                            comment_end = check_subprocess(
-                                                record_name,
-                                                record_url,
-                                                ffmpeg_command,
-                                                record_save_type,
-                                                custom_script
-                                            )
-                                            if comment_end:
-                                                if converts_to_mp4:
-                                                    file_paths = utils.get_file_paths(os.path.dirname(save_file_path))
-                                                    prefix = os.path.basename(save_file_path).rsplit('_', maxsplit=1)[0]
-                                                    for path in file_paths:
-                                                        if prefix in path:
-                                                            try:
-                                                                threading.Thread(
-                                                                    target=converts_mp4,
-                                                                    args=(path, delete_origin_file)
-                                                                ).start()
-                                                            except subprocess.CalledProcessError as e:
-                                                                logger.error(f"转码失败: {e} ")
-                                                return
-
-                                        except subprocess.CalledProcessError as e:
-                                            logger.error(
-                                                f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
-                                            with max_request_lock:
-                                                error_count += 1
-                                                error_window.append(1)
-
-                                    else:
-                                        filename = anchor_name + f'_{title_in_name}' + now + ".ts"
-                                        print(f'{rec_info}/{filename}')
-                                        save_file_path = full_path + '/' + filename
-
-                                        try:
-                                            command = [
-                                                "-c:v", "copy",
-                                                "-c:a", "copy",
-                                                "-map", "0",
-                                                "-f", "mpegts",
-                                                save_file_path,
-                                            ]
-
-                                            ffmpeg_command.extend(command)
-                                            comment_end = check_subprocess(
-                                                record_name,
-                                                record_url,
-                                                ffmpeg_command,
-                                                record_save_type,
-                                                custom_script
-                                            )
-                                            if comment_end:
-                                                threading.Thread(
-                                                    target=converts_mp4, args=(save_file_path, delete_origin_file)
-                                                ).start()
-                                                return
-
-                                        except subprocess.CalledProcessError as e:
-                                            logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
-                                            with max_request_lock:
-                                                error_count += 1
-                                                error_window.append(1)
+                                record_finished, should_return = recording_flow_service.execute(
+                                    record_name=record_name,
+                                    record_url=record_url,
+                                    anchor_name=anchor_name,
+                                    platform=platform,
+                                    full_path=full_path,
+                                    title_in_name=title_in_name,
+                                    now=now,
+                                    record_quality_zh=record_quality_zh,
+                                    port_info=port_info,
+                                    ffmpeg_command=ffmpeg_command,
+                                    rec_info=rec_info,
+                                )
+                                if should_return:
+                                    return
 
                                 count_time = time.time()
 
@@ -2184,4 +2243,5 @@ while True:
         first_run = False
 
     time.sleep(3)
+
 
