@@ -3,6 +3,8 @@ version: '3.8'
 services:
   app:
     image: ihmily/douyin-live-recorder:latest
+    ports:
+      - "8000:8000"
     environment:
       - TERM=xterm-256color
     tty: true

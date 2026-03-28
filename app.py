@@ -1,0 +1,111 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+from src.runtime import RuntimeApiManager
+
+
+BASE_DIR = Path(__file__).resolve().parent
+URL_CONFIG_PATH = BASE_DIR / "config" / "URL_config.ini"
+INDEX_FILE = BASE_DIR / "index.html"
+
+
+app = FastAPI(title="DouyinLiveRecorder API", version="0.1.0")
+manager = RuntimeApiManager(URL_CONFIG_PATH)
+
+
+class TaskCreateRequest(BaseModel):
+    url: str = Field(..., min_length=1)
+    quality: str = Field(default="原画")
+    anchor_name: str = Field(default="")
+
+
+class TaskUpdateRequest(BaseModel):
+    url: str | None = None
+    quality: str | None = None
+    anchor_name: str | None = None
+    enabled: bool | None = None
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    manager.bootstrap()
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get("/api/v1/tasks")
+def list_tasks() -> dict[str, list[dict]]:
+    return {"items": manager.list_tasks()}
+
+
+@app.post("/api/v1/tasks")
+def create_task(payload: TaskCreateRequest) -> dict:
+    item = manager.create_task(
+        url=payload.url,
+        quality=payload.quality,
+        anchor_name=payload.anchor_name,
+    )
+    return {"item": item}
+
+
+@app.put("/api/v1/tasks/{task_id:path}")
+def update_task(task_id: str, payload: TaskUpdateRequest) -> dict:
+    item = manager.update_task(
+        task_id,
+        url=payload.url,
+        quality=payload.quality,
+        anchor_name=payload.anchor_name,
+        enabled=payload.enabled,
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    return {"item": item}
+
+
+@app.delete("/api/v1/tasks/{task_id:path}")
+def delete_task(task_id: str) -> dict[str, bool]:
+    ok = manager.delete_task(task_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="task not found")
+    return {"deleted": True}
+
+
+@app.post("/api/v1/tasks/{task_id:path}/start")
+def start_task(task_id: str) -> dict:
+    item = manager.start_task(task_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    return {"item": item}
+
+
+@app.post("/api/v1/tasks/{task_id:path}/stop")
+def stop_task(task_id: str, disable: bool = Query(default=False)) -> dict:
+    item = manager.stop_task(task_id, disable=disable)
+    if item is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    return {"item": item}
+
+
+@app.get("/api/v1/summary")
+def get_summary() -> dict:
+    return manager.get_summary()
+
+
+if INDEX_FILE.exists():
+    app.mount("/static", StaticFiles(directory=str(BASE_DIR)), name="static")
+
+
+@app.get("/")
+def index() -> FileResponse:
+    if not INDEX_FILE.exists():
+        raise HTTPException(status_code=404, detail="index file not found")
+    return FileResponse(INDEX_FILE)
