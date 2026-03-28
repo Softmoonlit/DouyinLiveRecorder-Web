@@ -131,6 +131,7 @@ class RuntimeStateService:
         """Sync current task metadata from URL config parsing results."""
         with self._lock:
             active_ids: set[str] = set()
+            disabled_ids: set[str] = set()
             for quality, url, anchor_name in url_tuples:
                 task_id = url
                 active_ids.add(task_id)
@@ -146,6 +147,7 @@ class RuntimeStateService:
                 task = self._get_or_create_task(disabled_url, disabled_url)
                 task.enabled = False
                 task.state = TaskState.OFFLINE
+                disabled_ids.add(disabled_url)
                 self._touch(task)
 
             known_enabled = {k for k, v in self._tasks.items() if v.enabled}
@@ -155,6 +157,13 @@ class RuntimeStateService:
                 task.enabled = False
                 task.state = TaskState.OFFLINE
                 self._touch(task)
+
+            # Remove tasks that no longer exist in URL config to avoid ghost entries after delete.
+            present_ids = active_ids | disabled_ids
+            removed_ids = [task_id for task_id in self._tasks.keys() if task_id not in present_ids]
+            for task_id in removed_ids:
+                self._tasks.pop(task_id, None)
+                self._handles.pop(task_id, None)
 
     def get_snapshot(self) -> dict[str, dict[str, str | bool | float | None]]:
         with self._lock:
@@ -177,3 +186,8 @@ class RuntimeStateService:
     def get_task(self, task_id: str) -> RuntimeTask | None:
         with self._lock:
             return self._tasks.get(task_id)
+
+    def remove_task(self, task_id: str) -> None:
+        with self._lock:
+            self._tasks.pop(task_id, None)
+            self._handles.pop(task_id, None)

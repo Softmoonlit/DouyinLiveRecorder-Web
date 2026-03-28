@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import unquote
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -17,6 +18,15 @@ INDEX_FILE = BASE_DIR / "index.html"
 
 app = FastAPI(title="DouyinLiveRecorder API", version="0.1.0")
 manager = RuntimeApiManager(URL_CONFIG_PATH)
+
+
+def _normalize_task_id(task_id: str) -> str:
+    value = unquote(task_id).strip()
+    if value.startswith("https:/") and not value.startswith("https://"):
+        return value.replace("https:/", "https://", 1)
+    if value.startswith("http:/") and not value.startswith("http://"):
+        return value.replace("http:/", "http://", 1)
+    return value
 
 
 class TaskCreateRequest(BaseModel):
@@ -63,8 +73,9 @@ def create_task(payload: TaskCreateRequest) -> dict:
 
 @app.put("/api/v1/tasks/{task_id:path}")
 def update_task(task_id: str, payload: TaskUpdateRequest) -> dict:
+    normalized_task_id = _normalize_task_id(task_id)
     item = manager.update_task(
-        task_id,
+        normalized_task_id,
         url=payload.url,
         quality=payload.quality,
         anchor_name=payload.anchor_name,
@@ -77,7 +88,8 @@ def update_task(task_id: str, payload: TaskUpdateRequest) -> dict:
 
 @app.delete("/api/v1/tasks/{task_id:path}")
 def delete_task(task_id: str) -> dict[str, bool]:
-    ok = manager.delete_task(task_id)
+    normalized_task_id = _normalize_task_id(task_id)
+    ok = manager.delete_task(normalized_task_id)
     if not ok:
         raise HTTPException(status_code=404, detail="task not found")
     return {"deleted": True}
@@ -85,7 +97,8 @@ def delete_task(task_id: str) -> dict[str, bool]:
 
 @app.post("/api/v1/tasks/{task_id:path}/start")
 def start_task(task_id: str) -> dict:
-    item = manager.start_task(task_id)
+    normalized_task_id = _normalize_task_id(task_id)
+    item = manager.start_task(normalized_task_id)
     if item is None:
         raise HTTPException(status_code=404, detail="task not found")
     return {"item": item}
@@ -93,7 +106,8 @@ def start_task(task_id: str) -> dict:
 
 @app.post("/api/v1/tasks/{task_id:path}/stop")
 def stop_task(task_id: str, disable: bool = Query(default=False)) -> dict:
-    item = manager.stop_task(task_id, disable=disable)
+    normalized_task_id = _normalize_task_id(task_id)
+    item = manager.stop_task(normalized_task_id, disable=disable)
     if item is None:
         raise HTTPException(status_code=404, detail="task not found")
     return {"item": item}

@@ -151,7 +151,9 @@ class RuntimeApiManager:
         with self._lock:
             deleted = self._repo.delete_task(task_id, default_quality=self._default_quality)
             if deleted:
-                self._state.stop_task(task_id, disable=True)
+                if self._state.get_task(task_id) is not None:
+                    self._state.stop_task(task_id, disable=True)
+                self._state.remove_task(task_id)
             return deleted
 
     def start_task(self, task_id: str) -> dict | None:
