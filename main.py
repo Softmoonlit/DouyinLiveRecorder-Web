@@ -31,6 +31,7 @@ from src import spider, stream
 from src.proxy import ProxyDetector
 from src.utils import logger
 from src import utils
+from src.runtime import RuntimeStateService
 from msg_push import (
     dingtalk, xizhi, tg_bot, send_email, bark, ntfy, pushplus
 )
@@ -65,6 +66,7 @@ not_record_list = []
 start_display_time = datetime.datetime.now()
 global_proxy = False
 recording_time_list = {}
+runtime_state_service = RuntimeStateService()
 script_path = os.path.split(os.path.realpath(sys.argv[0]))[0]
 config_file = f'{script_path}/config/config.ini'
 url_config_file = f'{script_path}/config/URL_config.ini'
@@ -85,6 +87,25 @@ def signal_handler(_signal, _frame):
 
 
 signal.signal(signal.SIGTERM, signal_handler)
+
+
+def start_task_service(url_tuple: tuple, monitor_thread: threading.Thread | None = None) -> None:
+    quality, url, anchor_name = url_tuple
+    runtime_state_service.upsert_task(url, url=url, quality=quality, anchor_name=anchor_name)
+    runtime_state_service.mark_monitoring(url)
+    runtime_state_service.bind_monitor_thread(url, monitor_thread)
+
+
+def stop_task_service(task_id: str, disable: bool = False, timeout: float = 10.0) -> bool:
+    return runtime_state_service.stop_task(task_id=task_id, timeout=timeout, disable=disable)
+
+
+def get_runtime_status_snapshot() -> dict[str, dict[str, str | bool | float | None]]:
+    return runtime_state_service.get_snapshot()
+
+
+def reload_runtime_tasks(url_tuples: list[tuple[str, str, str]], comments: list[str]) -> None:
+    runtime_state_service.reload_from_url_config(url_tuples, comments)
 
 
 def display_info() -> None:
@@ -376,6 +397,11 @@ def run_script(command: str) -> None:
 def clear_record_info(record_name: str, record_url: str) -> None:
     global monitoring
     recording.discard(record_name)
+    if record_url in url_comments:
+        runtime_state_service.disable_task(record_url)
+    else:
+        runtime_state_service.mark_monitoring(record_url)
+    runtime_state_service.unbind_process(record_url)
     if record_url in url_comments and record_url in running_list:
         running_list.remove(record_url)
         monitoring -= 1
@@ -403,7 +429,8 @@ def direct_download_stream(source_url: str, save_path: str, record_name: str, li
                 chunk_size = 1024 * 16
                 
                 for chunk in response.iter_bytes(chunk_size):
-                    if live_url in url_comments or exit_recording:
+                    if live_url in url_comments or exit_recording or runtime_state_service.should_stop(live_url):
+                        runtime_state_service.mark_monitoring(live_url)
                         color_obj.print_colored(f"[{record_name}]录制时已被注释或请求停止,下载中断", color_obj.YELLOW)
                         clear_record_info(record_name, live_url)
                         return False
@@ -424,6 +451,7 @@ def check_subprocess(record_name: str, record_url: str, ffmpeg_command: list, sa
     process = subprocess.Popen(
         ffmpeg_command, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, startupinfo=get_startup_info(os_type)
     )
+    runtime_state_service.bind_process(record_url, process)
 
     subs_file_path = save_file_path.rsplit('.', maxsplit=1)[0]
     subs_thread_name = f'subs_{Path(subs_file_path).name}'
@@ -435,17 +463,10 @@ def check_subprocess(record_name: str, record_url: str, ffmpeg_command: list, sa
         create_var[subs_thread_name].start()
 
     while process.poll() is None:
-        if record_url in url_comments or exit_recording:
+        if record_url in url_comments or exit_recording or runtime_state_service.should_stop(record_url):
             color_obj.print_colored(f"[{record_name}]录制时已被注释,本条线程将会退出", color_obj.YELLOW)
             clear_record_info(record_name, record_url)
-            # process.terminate()
-            if os.name == 'nt':
-                if process.stdin:
-                    process.stdin.write(b'q')
-                    process.stdin.close()
-            else:
-                process.send_signal(signal.SIGINT)
-            process.wait()
+            stop_task_service(record_url, disable=record_url in url_comments)
             return True
         time.sleep(1)
 
@@ -489,6 +510,8 @@ def check_subprocess(record_name: str, record_url: str, ffmpeg_command: list, sa
         color_obj.print_colored(f"\n{record_name} {stop_time} 直播录制出错,返回码: {return_code}\n", color_obj.RED)
 
     recording.discard(record_name)
+    runtime_state_service.mark_monitoring(record_url)
+    runtime_state_service.unbind_process(record_url)
     return False
 
 
@@ -545,6 +568,11 @@ def select_source_url(link, stream_info):
 def start_record(url_data: tuple, count_variable: int = -1) -> None:
     global error_count
 
+    record_quality_zh, record_url, anchor_name = url_data
+    runtime_state_service.bind_monitor_thread(record_url, threading.current_thread())
+    runtime_state_service.upsert_task(record_url, url=record_url, quality=record_quality_zh, anchor_name=anchor_name)
+    runtime_state_service.mark_monitoring(record_url)
+
     while True:
         try:
             record_finished = False
@@ -553,7 +581,6 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
             new_record_url = ''
             count_time = time.time()
             retry = 0
-            record_quality_zh, record_url, anchor_name = url_data
             record_quality = get_quality_code(record_quality_zh)
             proxy_address = proxy_addr
             platform = '未知平台'
@@ -1074,6 +1101,7 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
 
                         push_at = datetime.datetime.today().strftime('%Y-%m-%d %H:%M:%S')
                         if port_info['is_live'] is False:
+                            runtime_state_service.mark_monitoring(record_url)
                             print(f"\r{record_name} 等待直播... ")
 
                             if start_pushed:
@@ -1092,6 +1120,7 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                                 start_pushed = False
 
                         else:
+                            runtime_state_service.mark_live_not_recording(record_url)
                             content = f"\r{record_name} 正在直播中..."
                             print(content)
 
@@ -1206,6 +1235,7 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                                 recording.add(record_name)
                                 start_record_time = datetime.datetime.now()
                                 recording_time_list[record_name] = [start_record_time, record_quality_zh]
+                                runtime_state_service.mark_recording(record_url)
                                 rec_info = f"\r{anchor_name} 准备开始录制视频: {full_path}"
                                 if show_url:
                                     re_plat = ('WinkTV', 'PandaTV', 'ShowRoom', 'CHZZK', 'Youtube')
@@ -1604,6 +1634,7 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
 
                 except Exception as e:
                     logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
+                    runtime_state_service.mark_failed(record_url, str(e))
                     with max_request_lock:
                         error_count += 1
                         error_window.append(1)
@@ -1638,6 +1669,7 @@ def start_record(url_data: tuple, count_variable: int = -1) -> None:
                     print('\r检测直播间中...', end="")
         except Exception as e:
             logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
+            runtime_state_service.mark_failed(record_url, str(e))
             with max_request_lock:
                 error_count += 1
                 error_window.append(1)
@@ -2118,6 +2150,7 @@ while True:
                     new_word = replace_words[1]
                 update_file(url_config_file, old_str=replace_words[0], new_str=new_word, start_str=start_with)
 
+            reload_runtime_tasks(url_tuples_list, url_comments)
         text_no_repeat_url = list(set(url_tuples_list))
 
         if len(text_no_repeat_url) > 0:
@@ -2133,6 +2166,7 @@ while True:
                     args = [url_tuple, monitoring]
                     create_var[f'thread_{monitoring}'] = threading.Thread(target=start_record, args=args)
                     create_var[f'thread_{monitoring}'].daemon = True
+                    start_task_service(url_tuple, create_var[f'thread_{monitoring}'])
                     create_var[f'thread_{monitoring}'].start()
                     running_list.append(url_tuple[1])
                     time.sleep(local_delay_default)
