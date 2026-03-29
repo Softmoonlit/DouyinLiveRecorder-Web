@@ -47,8 +47,9 @@ async def get_douyin_stream_url(json_data: dict, video_quality: str, proxy_addr:
     }
 
     status = json_data.get("status", 4)
+    status_text = str(status).strip().lower()
 
-    if status == 2:
+    if status == 2 or status_text == "2" or status_text == "on":
         stream_url = json_data['stream_url']
         flv_url_dict = stream_url['flv_pull_url']
         flv_url_list: list = list(flv_url_dict.values())

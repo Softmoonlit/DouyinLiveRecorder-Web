@@ -245,6 +245,14 @@ class LiveStatusProbe:
             is_live = is_live_raw
         elif is_live_raw in (0, 1):
             is_live = bool(is_live_raw)
+        elif isinstance(is_live_raw, str):
+            lowered = is_live_raw.strip().lower()
+            if lowered in {"1", "true", "on", "live", "yes", "y", "是"}:
+                is_live = True
+            elif lowered in {"0", "false", "off", "not_live", "no", "n", "否"}:
+                is_live = False
+            else:
+                is_live = None
         else:
             is_live = None
 
@@ -255,6 +263,10 @@ class LiveStatusProbe:
             or ""
         )
         title = str(port_info.get("title") or "")
+
+        # Some platforms occasionally omit/serialize live flags oddly while still returning a valid stream URL.
+        if is_live is not True and record_url:
+            is_live = True
 
         return LiveProbeResult(
             supported=True,
