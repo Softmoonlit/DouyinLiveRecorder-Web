@@ -22,6 +22,10 @@ Coverage:
 1. `chmod +x scripts/phase6_config_validation.sh`
 2. `./scripts/phase6_config_validation.sh`
 
+If you need detailed step traces:
+
+1. `DEBUG=1 bash scripts/phase6_config_validation.sh`
+
 Optional strict boundary check (requires a real live room URL):
 
 1. `export LIVE_TEST_URL='https://live.douyin.com/904715492544'`

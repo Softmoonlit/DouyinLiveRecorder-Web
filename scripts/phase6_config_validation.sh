@@ -1,14 +1,44 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ -z "${BASH_VERSION:-}" ]]; then
+  echo "[ERROR] This script must be run with bash, for example: bash scripts/phase6_config_validation.sh"
+  exit 1
+fi
+
+SCRIPT_NAME="$(basename "$0")"
+
+log() {
+  local now
+  now="$(date '+%Y-%m-%d %H:%M:%S')"
+  echo "[$now] $*"
+}
+
+on_error() {
+  local exit_code=$?
+  local line_no=${BASH_LINENO[0]:-unknown}
+  local cmd=${BASH_COMMAND:-unknown}
+  echo "[ERROR] ${SCRIPT_NAME} failed at line ${line_no}: ${cmd} (exit=${exit_code})"
+}
+
+trap on_error ERR
+
+if [[ "${DEBUG:-0}" == "1" ]]; then
+  set -x
+fi
+
+log "Starting ${SCRIPT_NAME}"
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+log "Working directory: $(pwd)"
 
 if command -v docker-compose >/dev/null 2>&1; then
   DC=(docker-compose)
 else
   DC=(docker compose)
 fi
+log "Using compose command: ${DC[*]}"
 
 dc() {
   "${DC[@]}" "$@"
