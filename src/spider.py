@@ -27,7 +27,7 @@ import urllib.request
 from . import JS_SCRIPT_PATH, utils
 from .utils import trace_error_decorator, generate_random_string
 from .logger import script_path
-from .room import get_sec_user_id, get_unique_id, UnsupportedUrlError
+from .room import get_sec_user_id, get_unique_id, UnsupportedUrlError, get_xbogus
 from .http_clients.async_http import async_req
 
 
@@ -62,6 +62,39 @@ async def get_play_url_list(m3u8: str, proxy: OptionalStr = None, header: Option
     url_to_bandwidth = {url: int(bandwidth) for bandwidth, url in zip(bandwidth_list, play_url_list)}
     play_url_list = sorted(play_url_list, key=lambda url: url_to_bandwidth[url], reverse=True)
     return play_url_list
+
+
+def _extract_douyin_room_data_from_html(html_str: str) -> OptionalDict:
+    """Best-effort fallback parser for escaped roomStore payload in Douyin HTML."""
+    if not html_str or "roomStore" not in html_str:
+        return None
+
+    try:
+        matches = re.findall(r'\\"roomStore\\":(.*?),\\"linkmicStore\\"', html_str, re.DOTALL)
+    except Exception:
+        return None
+
+    if not matches:
+        return None
+
+    # Prefer the latest roomStore payload; it usually carries populated roomInfo.room.
+    for raw in reversed(matches):
+        try:
+            decoded = bytes(raw, 'utf-8').decode('unicode_escape').replace('u0026', '&')
+            room_store = json.loads(decoded)
+        except Exception:
+            continue
+
+        room = room_store.get('roomInfo', {}).get('room')
+        if not isinstance(room, dict) or not room:
+            continue
+
+        owner = room.get('owner') if isinstance(room.get('owner'), dict) else {}
+        if owner and not room.get('anchor_name'):
+            room['anchor_name'] = owner.get('nickname', '')
+        return room
+
+    return None
 
 
 @trace_error_decorator
@@ -112,10 +145,20 @@ async def get_douyin_app_stream_data(url: str, proxy_addr: OptionalStr = None, c
 
             }
             api = f'https://live.douyin.com/webcast/room/web/enter/?{urllib.parse.urlencode(params)}'
+            xbogus = await get_xbogus(api, headers)
+            api = f'{api}&X-Bogus={xbogus}'
             json_str = await async_req(url=api, proxy_addr=proxy_addr, headers=headers)
-            json_data = json.loads(json_str)['data']
-            room_data = json_data['data'][0]
-            room_data['anchor_name'] = json_data['user']['nickname']
+            try:
+                json_data = json.loads(json_str).get('data', {})
+            except Exception:
+                raise RuntimeError(f'Failed to parse web enter payload: {str(json_str)[:180]}')
+
+            room_list = json_data.get('data', []) if isinstance(json_data, dict) else []
+            if not room_list:
+                raise RuntimeError(f'Unexpected web enter data: {str(json_data)[:180]}')
+
+            room_data = room_list[0]
+            room_data['anchor_name'] = json_data.get('user', {}).get('nickname', '') if isinstance(json_data, dict) else ''
         else:
             try:
                 data = await get_sec_user_id(url, proxy_addr=proxy_addr)
@@ -155,6 +198,13 @@ async def get_douyin_app_stream_data(url: str, proxy_addr: OptionalStr = None, c
                     room_data['stream_url']['flv_pull_url'] = {**origin_flv, **flv_pull_url}
     except Exception as e:
         print(f"Error message: {e} Error line: {e.__traceback__.tb_lineno}")
+        try:
+            html_fallback = await async_req(url=url, proxy_addr=proxy_addr, headers=headers)
+            fallback_room = _extract_douyin_room_data_from_html(str(html_fallback))
+            if fallback_room:
+                return fallback_room
+        except Exception:
+            pass
         room_data = {'anchor_name': ""}
     return room_data
 
@@ -170,18 +220,35 @@ async def get_douyin_stream_data(url: str, proxy_addr: OptionalStr = None, cooki
     if cookies:
         headers['Cookie'] = cookies
 
+    html_str = ''
     try:
         origin_url_list = None
         html_str = await async_req(url=url, proxy_addr=proxy_addr, headers=headers)
         match_json_str = re.search(r'(\{\\"state\\":.*?)]\\n"]\)', html_str)
         if not match_json_str:
             match_json_str = re.search(r'(\{\\"common\\":.*?)]\\n"]\)</script><div hidden', html_str)
+        if not match_json_str:
+            fallback_room = _extract_douyin_room_data_from_html(html_str)
+            if fallback_room:
+                return fallback_room
+            raise RuntimeError('room payload not found in html')
+
         json_str = match_json_str.group(1)
         cleaned_string = json_str.replace('\\', '').replace(r'u0026', r'&')
-        room_store = re.search('"roomStore":(.*?),"linkmicStore"', cleaned_string, re.DOTALL).group(1)
-        anchor_name = re.search('"nickname":"(.*?)","avatar_thumb', room_store, re.DOTALL).group(1)
+        room_store_match = re.search('"roomStore":(.*?),"linkmicStore"', cleaned_string, re.DOTALL)
+        if not room_store_match:
+            fallback_room = _extract_douyin_room_data_from_html(html_str)
+            if fallback_room:
+                return fallback_room
+            raise RuntimeError('roomStore payload not found in cleaned html')
+
+        room_store = room_store_match.group(1)
+        anchor_match = re.search('"nickname":"(.*?)","avatar_thumb', room_store, re.DOTALL)
+        anchor_name = anchor_match.group(1) if anchor_match else ''
         room_store = room_store.split(',"has_commerce_goods"')[0] + '}}}'
         json_data = json.loads(room_store)['roomInfo']['room']
+        if not anchor_name:
+            anchor_name = json_data.get('owner', {}).get('nickname', '') if isinstance(json_data.get('owner'), dict) else ''
         json_data['anchor_name'] = anchor_name
         if 'status' in json_data and json_data['status'] == 4:
             return json_data
@@ -212,6 +279,9 @@ async def get_douyin_stream_data(url: str, proxy_addr: OptionalStr = None, cooki
 
     except Exception as e:
         print(f"First data retrieval failed: {url} Preparing to switch parsing methods due to {e}")
+        fallback_room = _extract_douyin_room_data_from_html(html_str)
+        if fallback_room:
+            return fallback_room
         return await get_douyin_app_stream_data(url=url, proxy_addr=proxy_addr, cookies=cookies)
 
 
