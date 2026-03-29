@@ -97,10 +97,88 @@ def _extract_douyin_room_data_from_html(html_str: str) -> OptionalDict:
     return None
 
 
+def _extract_cookie_value(cookie_header: str, key: str) -> str:
+    if not cookie_header:
+        return ""
+
+    for part in cookie_header.split(';'):
+        item = part.strip()
+        if not item or '=' not in item:
+            continue
+        k, v = item.split('=', 1)
+        if k.strip() == key:
+            return v.strip()
+    return ""
+
+
+def _try_parse_json(payload: str) -> object | None:
+    text = str(payload or "").strip()
+    if not text:
+        return None
+
+    # Some endpoints prepend anti-JSON-hijacking guards.
+    if text.startswith(")]}'"):
+        newline_index = text.find('\n')
+        text = text[newline_index + 1:] if newline_index >= 0 else ""
+
+    if not text:
+        return None
+
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
+
+
+def _extract_douyin_web_enter_room(payload: object) -> OptionalDict:
+    if not isinstance(payload, dict):
+        return None
+
+    user_info: dict = {}
+    room_candidates: list[dict] = []
+
+    top_user = payload.get('user')
+    if isinstance(top_user, dict):
+        user_info = top_user
+
+    data_container = payload.get('data')
+    if isinstance(data_container, list):
+        room_candidates.extend([item for item in data_container if isinstance(item, dict)])
+    elif isinstance(data_container, dict):
+        nested_user = data_container.get('user')
+        if isinstance(nested_user, dict):
+            user_info = nested_user
+
+        direct_room = data_container.get('room')
+        if isinstance(direct_room, dict):
+            room_candidates.append(direct_room)
+
+        nested_data = data_container.get('data')
+        if isinstance(nested_data, list):
+            room_candidates.extend([item for item in nested_data if isinstance(item, dict)])
+        elif isinstance(nested_data, dict):
+            nested_room = nested_data.get('room')
+            if isinstance(nested_room, dict):
+                room_candidates.append(nested_room)
+            nested_nested_data = nested_data.get('data')
+            if isinstance(nested_nested_data, list):
+                room_candidates.extend([item for item in nested_nested_data if isinstance(item, dict)])
+
+    if not room_candidates:
+        return None
+
+    room_data = room_candidates[0]
+    if not room_data.get('anchor_name'):
+        owner = room_data.get('owner') if isinstance(room_data.get('owner'), dict) else {}
+        room_data['anchor_name'] = user_info.get('nickname') or owner.get('nickname', '')
+
+    return room_data
+
+
 @trace_error_decorator
 async def get_douyin_app_stream_data(url: str, proxy_addr: OptionalStr = None, cookies: OptionalStr = None) -> dict:
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
         'Accept-Language': 'zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2',
         'Referer': 'https://live.douyin.com/',
         'Cookie': 'ttwid=1%7CB1qls3GdnZhUov9o2NxOMxxYS2ff6OSvEWbv0ytbES4%7C1680522049%7C280d802d6d478e3e78d0c807f7c487e7ffec0ae4e5fdd6a0fe74c3c6af149511; my_rd=1; passport_csrf_token=3ab34460fa656183fccfb904b16ff742; passport_csrf_token_default=3ab34460fa656183fccfb904b16ff742; d_ticket=9f562383ac0547d0b561904513229d76c9c21; n_mh=hvnJEQ4Q5eiH74-84kTFUyv4VK8xtSrpRZG1AhCeFNI; store-region=cn-fj; store-region-src=uid; LOGIN_STATUS=1; __security_server_data_status=1; FORCE_LOGIN=%7B%22videoConsumedRemainSeconds%22%3A180%7D; pwa2=%223%7C0%7C3%7C0%22; download_guide=%223%2F20230729%2F0%22; volume_info=%7B%22isUserMute%22%3Afalse%2C%22isMute%22%3Afalse%2C%22volume%22%3A0.6%7D; strategyABtestKey=%221690824679.923%22; stream_recommend_feed_params=%22%7B%5C%22cookie_enabled%5C%22%3Atrue%2C%5C%22screen_width%5C%22%3A1536%2C%5C%22screen_height%5C%22%3A864%2C%5C%22browser_online%5C%22%3Atrue%2C%5C%22cpu_core_num%5C%22%3A8%2C%5C%22device_memory%5C%22%3A8%2C%5C%22downlink%5C%22%3A10%2C%5C%22effective_type%5C%22%3A%5C%224g%5C%22%2C%5C%22round_trip_time%5C%22%3A150%7D%22; VIDEO_FILTER_MEMO_SELECT=%7B%22expireTime%22%3A1691443863751%2C%22type%22%3Anull%7D; home_can_add_dy_2_desktop=%221%22; __live_version__=%221.1.1.2169%22; device_web_cpu_core=8; device_web_memory_size=8; xgplayer_user_id=346045893336; csrf_session_id=2e00356b5cd8544d17a0e66484946f28; odin_tt=724eb4dd23bc6ffaed9a1571ac4c757ef597768a70c75fef695b95845b7ffcd8b1524278c2ac31c2587996d058e03414595f0a4e856c53bd0d5e5f56dc6d82e24004dc77773e6b83ced6f80f1bb70627; __ac_nonce=064caded4009deafd8b89; __ac_signature=_02B4Z6wo00f01HLUuwwAAIDBh6tRkVLvBQBy9L-AAHiHf7; ttcid=2e9619ebbb8449eaa3d5a42d8ce88ec835; webcast_leading_last_show_time=1691016922379; webcast_leading_total_show_times=1; webcast_local_quality=sd; live_can_add_dy_2_desktop=%221%22; msToken=1JDHnVPw_9yTvzIrwb7cQj8dCMNOoesXbA_IooV8cezcOdpe4pzusZE7NB7tZn9TBXPr0ylxmv-KMs5rqbNUBHP4P7VBFUu0ZAht_BEylqrLpzgt3y5ne_38hXDOX8o=; msToken=jV_yeN1IQKUd9PlNtpL7k5vthGKcHo0dEh_QPUQhr8G3cuYv-Jbb4NnIxGDmhVOkZOCSihNpA2kvYtHiTW25XNNX_yrsv5FN8O6zm3qmCIXcEe0LywLn7oBO2gITEeg=; tt_scid=mYfqpfbDjqXrIGJuQ7q-DlQJfUSG51qG.KUdzztuGP83OjuVLXnQHjsz-BRHRJu4e986'
@@ -119,46 +197,73 @@ async def get_douyin_app_stream_data(url: str, proxy_addr: OptionalStr = None, c
             "app_id": "1128"
         }
         api2 = f'https://webcast.amemv.com/webcast/room/reflow/info/?{urllib.parse.urlencode(app_params)}'
+        a_bogus = await get_xbogus(api2, headers)
+        if a_bogus:
+            api2 = f'{api2}&a_bogus={urllib.parse.quote(a_bogus)}'
         json_str2 = await async_req(url=api2, proxy_addr=proxy_addr, headers=headers)
-        json_data2 = json.loads(json_str2)['data']
+        json_payload2 = _try_parse_json(json_str2)
+        if not isinstance(json_payload2, dict):
+            raise RuntimeError(f'Invalid reflow payload: {str(json_str2)[:180]}')
+
+        json_data2 = json_payload2.get('data')
+        if not isinstance(json_data2, dict) or not isinstance(json_data2.get('room'), dict):
+            raise RuntimeError(f'Unexpected reflow data: {str(json_payload2)[:180]}')
+
         room_data2 = json_data2['room']
-        room_data2['anchor_name'] = room_data2['owner']['nickname']
+        owner = room_data2.get('owner') if isinstance(room_data2.get('owner'), dict) else {}
+        room_data2['anchor_name'] = owner.get('nickname', '')
         return room_data2
 
     try:
         web_rid = url.split('?')[0].split('live.douyin.com/')
         if len(web_rid) > 1:
-            web_rid = web_rid[1]
+            web_rid = web_rid[1].strip('/')
+            cookie_header = headers.get('Cookie') or headers.get('cookie', '')
+            ms_token = _extract_cookie_value(cookie_header, 'msToken')
             params = {
                 "aid": "6383",
                 "app_name": "douyin_web",
                 "live_id": "1",
                 "device_platform": "web",
                 "language": "zh-CN",
+                "enter_from": "link_share",
+                "cookie_enabled": "true",
+                "screen_width": "1707",
+                "screen_height": "1067",
                 "browser_language": "zh-CN",
                 "browser_platform": "Win32",
                 "browser_name": "Chrome",
-                "browser_version": "116.0.0.0",
+                "browser_version": "146.0.0.0",
+                "browser_online": "true",
                 "web_rid": web_rid,
-                'msToken': '',
-                'a_bogus': ''
-
+                "room_id_str": "",
+                "enter_source": "",
+                "is_need_double_stream": "false",
+                "insert_task_id": "",
+                "live_reason": "",
+                "msToken": ms_token,
             }
             api = f'https://live.douyin.com/webcast/room/web/enter/?{urllib.parse.urlencode(params)}'
-            xbogus = await get_xbogus(api, headers)
-            api = f'{api}&X-Bogus={xbogus}'
+            a_bogus = await get_xbogus(api, headers)
+            if a_bogus:
+                params['a_bogus'] = a_bogus
+                api = f'https://live.douyin.com/webcast/room/web/enter/?{urllib.parse.urlencode(params)}'
+
             json_str = await async_req(url=api, proxy_addr=proxy_addr, headers=headers)
-            try:
-                json_data = json.loads(json_str).get('data', {})
-            except Exception:
+            room_data = _extract_douyin_web_enter_room(_try_parse_json(json_str))
+            if room_data is None:
+                legacy_params = dict(params)
+                legacy_params.pop('a_bogus', None)
+                legacy_api = f'https://live.douyin.com/webcast/room/web/enter/?{urllib.parse.urlencode(legacy_params)}'
+                legacy_xbogus = await get_xbogus(legacy_api, headers)
+                if legacy_xbogus:
+                    legacy_api = f'{legacy_api}&X-Bogus={urllib.parse.quote(legacy_xbogus)}'
+
+                legacy_json = await async_req(url=legacy_api, proxy_addr=proxy_addr, headers=headers)
+                room_data = _extract_douyin_web_enter_room(_try_parse_json(legacy_json))
+
+            if room_data is None:
                 raise RuntimeError(f'Failed to parse web enter payload: {str(json_str)[:180]}')
-
-            room_list = json_data.get('data', []) if isinstance(json_data, dict) else []
-            if not room_list:
-                raise RuntimeError(f'Unexpected web enter data: {str(json_data)[:180]}')
-
-            room_data = room_list[0]
-            room_data['anchor_name'] = json_data.get('user', {}).get('nickname', '') if isinstance(json_data, dict) else ''
         else:
             try:
                 data = await get_sec_user_id(url, proxy_addr=proxy_addr)
