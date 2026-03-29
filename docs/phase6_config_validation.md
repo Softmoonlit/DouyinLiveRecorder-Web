@@ -1,53 +1,53 @@
-# Phase 6 Config Validation
+# Phase 6 配置专项验证
 
-This script validates Phase 6 first-batch config.ini adaptation behavior in the Web runtime.
+该脚本用于验证 Phase 6 第一批 config.ini 适配在 Web 运行时中的行为是否正确。
 
-Coverage:
+覆盖范围：
 
-1. Config snapshot endpoint schema (`/api/v1/config/snapshot`).
-2. Config reload endpoint behavior (`/api/v1/config/reload`).
-3. Default quality application when task creation omits `quality`.
-4. Invalid config fallback and warning emission.
-5. Sensitive value masking in config snapshot output.
-6. Optional live-room boundary check for restart-required recording parameter changes.
+1. 配置快照接口结构校验（/api/v1/config/snapshot）。
+2. 配置重载接口行为校验（/api/v1/config/reload）。
+3. 创建任务省略 quality 时默认画质生效。
+4. 非法配置回退与 warning 产出。
+5. 配置快照中的敏感字段脱敏。
+6. 可选：需要重启任务才生效的录制参数边界校验（基于真实直播间）。
 
-## Prerequisites
+## 前置条件
 
-- Linux cloud server with Docker Engine and Docker Compose plugin.
-- Repository checked out on server.
-- Current directory is repository root.
+- Linux 云服务器，已安装 Docker Engine 与 Docker Compose 插件。
+- 仓库代码已拉取到服务器。
+- 当前目录位于仓库根目录。
 
-## Run
+## 执行方式
 
-1. `chmod +x scripts/phase6_config_validation.sh`
-2. `./scripts/phase6_config_validation.sh`
+1. chmod +x scripts/phase6_config_validation.sh
+2. ./scripts/phase6_config_validation.sh
 
-If you need detailed step traces:
+如需查看详细执行轨迹：
 
-1. `DEBUG=1 bash scripts/phase6_config_validation.sh`
+1. DEBUG=1 bash scripts/phase6_config_validation.sh
 
-Optional strict boundary check (requires a real live room URL):
+可选严格边界校验（需要真实直播间地址）：
 
-1. `export LIVE_TEST_URL='https://live.douyin.com/904715492544'`
-2. `export LIVE_TEST_QUALITY='原画'`
-3. `./scripts/phase6_config_validation.sh`
+1. export LIVE_TEST_URL='https://live.douyin.com/904715492544'
+2. export LIVE_TEST_QUALITY='原画'
+3. ./scripts/phase6_config_validation.sh
 
-If your user cannot access Docker socket, run with sudo-compose mode:
+若当前用户无 Docker socket 权限，可使用 sudo-compose 模式：
 
-1. `DOCKER_SUDO=1 bash scripts/phase6_config_validation.sh`
+1. DOCKER_SUDO=1 bash scripts/phase6_config_validation.sh
 
-Or grant docker group permission (recommended long-term):
+或长期修复 docker 组权限（推荐）：
 
-1. `sudo usermod -aG docker $USER`
-2. `newgrp docker`
+1. sudo usermod -aG docker $USER
+2. newgrp docker
 
-## Pass Criteria
+## 通过标准
 
-- Script exits with code `0`.
-- Final line contains: `[PASS] Phase 6 config validation completed successfully`.
+- 脚本退出码为 0。
+- 最后一行包含：[PASS] Phase 6 config validation completed successfully。
 
-## Notes
+## 说明
 
-- The script backs up and restores both `config/config.ini` and `config/URL_config.ini` automatically.
-- If `LIVE_TEST_URL` is not provided, the live restart-boundary check is skipped and all deterministic checks still run.
-- The script keeps the container running after completion for manual verification.
+- 脚本会自动备份并恢复 config/config.ini 与 config/URL_config.ini。
+- 若未提供 LIVE_TEST_URL，将跳过直播重启边界校验，其余确定性检查仍会执行。
+- 脚本执行结束后会保留容器运行，便于人工复核。

@@ -1,36 +1,36 @@
-# Phase 5 Regression Baseline
+# Phase 5 回归基线
 
-This baseline validates:
+本基线用于验证以下内容：
 
-1. Compatibility regression: legacy `config/URL_config.ini` formats are parsed correctly and `#` disable semantics are preserved.
-2. Functional regression: task CRUD, start/stop, unsupported-platform exception recovery, and dashboard schema are stable.
-3. Deployment regression: container startup, restart recovery, and graceful shutdown remain healthy.
+1. 兼容性回归：旧版 config/URL_config.ini 行格式可正确解析，且 # 禁用语义保持不变。
+2. 功能回归：任务 CRUD、启动/停止、不支持平台异常恢复、看板接口结构稳定。
+3. 部署回归：容器启动、重启恢复、优雅停机整体健康。
 
-## Prerequisites
+## 前置条件
 
-- Linux host with Docker Engine and Docker Compose plugin.
-- Repository checked out on host.
-- Current directory is repository root.
+- Linux 主机，已安装 Docker Engine 与 Docker Compose 插件。
+- 仓库代码已拉取到主机。
+- 当前目录位于仓库根目录。
 
-## Run
+## 执行方式
 
-If image naming conflicts on your server, set a custom image name first:
+若服务器上镜像命名冲突，先设置自定义镜像名：
 
-1. `export DOUYIN_RECORDER_IMAGE=your-registry-or-local-name:phase5`
+1. export DOUYIN_RECORDER_IMAGE=your-registry-or-local-name:phase5
 
-Then run baseline:
+然后执行基线脚本：
 
-1. `chmod +x scripts/phase5_regression.sh`
-2. `./scripts/phase5_regression.sh`
+1. chmod +x scripts/phase5_regression.sh
+2. ./scripts/phase5_regression.sh
 
-## Pass Criteria
+## 通过标准
 
-- Script exits with code `0`.
-- Final line contains: `[PASS] Phase 5 regression completed successfully`.
-- During execution, all compatibility/functional/deployment assertions pass.
+- 脚本退出码为 0。
+- 最后一行包含：[PASS] Phase 5 regression completed successfully。
+- 执行过程中所有兼容性/功能/部署断言全部通过。
 
-## Notes
+## 说明
 
-- The script temporarily rewrites `config/URL_config.ini` with legacy-format fixtures and restores the original file on exit (success or failure).
-- The script keeps the `app` container running at the end for manual verification.
-- The unsupported-platform recovery assertion uses `https://example.com/...` URLs to avoid environment-specific live-stream dependencies.
+- 脚本会临时改写 config/URL_config.ini 为旧格式样例，并在退出时（成功或失败）恢复原文件。
+- 脚本结束后会保留 app 容器运行，便于人工复核。
+- 不支持平台恢复断言使用 https://example.com/... 地址，避免依赖特定环境的真实直播源。
