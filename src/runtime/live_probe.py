@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-import configparser
 import logging
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 
 from src import spider, stream
+
+from .config_service import RuntimeConfigService
 
 
 logger = logging.getLogger(__name__)
@@ -36,12 +37,14 @@ class LiveProbeResult:
 class LiveStatusProbe:
     """Lightweight live-state probe service used by the Web runtime."""
 
-    def __init__(self, config_file_path: str | Path, *, encoding: str = "utf-8-sig", max_workers: int = 3) -> None:
-        self._config_file_path = Path(config_file_path)
-        self._encoding = encoding
+    def __init__(self, config_file_path: str | Path | RuntimeConfigService, *, max_workers: int = 3) -> None:
+        if isinstance(config_file_path, RuntimeConfigService):
+            self._config_service = config_file_path
+        else:
+            self._config_service = RuntimeConfigService(config_file_path)
+
         self._lock = threading.RLock()
         self._semaphore = threading.Semaphore(max_workers)
-        self._config_mtime: float = -1.0
 
         self._use_proxy = False
         self._proxy_addr = ""
@@ -224,37 +227,12 @@ class LiveStatusProbe:
 
     def _reload_config(self, *, force: bool = False) -> None:
         with self._lock:
-            if not self._config_file_path.exists():
-                return
+            self._config_service.reload_if_needed(force=force)
+            values = self._config_service.get_values()
 
-            current_mtime = self._config_file_path.stat().st_mtime
-            if not force and current_mtime == self._config_mtime:
-                return
-
-            parser = configparser.RawConfigParser()
-            parser.read(self._config_file_path, encoding=self._encoding)
-
-            use_proxy_value = self._get_value(parser, "录制设置", "是否使用代理ip(是/否)", "否")
-            self._use_proxy = str(use_proxy_value).strip() == "是"
-            self._proxy_addr = self._get_value(parser, "录制设置", "代理地址", "")
-
-            self._cookies = {
-                "douyin": self._get_value(parser, "Cookie", "抖音cookie", ""),
-                "tiktok": self._get_value(parser, "Cookie", "tiktok_cookie", ""),
-                "kuaishou": self._get_value(parser, "Cookie", "快手cookie", ""),
-                "huya": self._get_value(parser, "Cookie", "虎牙cookie", ""),
-                "douyu": self._get_value(parser, "Cookie", "斗鱼cookie", ""),
-                "bilibili": self._get_value(parser, "Cookie", "B站cookie", ""),
-                "xiaohongshu": self._get_value(parser, "Cookie", "小红书cookie", ""),
-            }
-            self._config_mtime = current_mtime
-
-    @staticmethod
-    def _get_value(parser: configparser.RawConfigParser, section: str, option: str, default: str) -> str:
-        try:
-            return parser.get(section, option)
-        except (configparser.NoOptionError, configparser.NoSectionError):
-            return default
+            self._use_proxy = values.use_proxy
+            self._proxy_addr = values.proxy_addr
+            self._cookies = dict(values.cookies)
 
     @staticmethod
     def _to_result(port_info: object, *, platform: str) -> LiveProbeResult:

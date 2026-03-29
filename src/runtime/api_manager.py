@@ -43,6 +43,10 @@ class RuntimeApiManager:
     def bootstrap(self) -> None:
         self._refresh_from_file(force=True)
 
+    def set_default_quality(self, value: str) -> None:
+        with self._lock:
+            self._default_quality = value or self._default_quality
+
     def refresh_if_changed(self) -> bool:
         return self._refresh_from_file(force=False)
 

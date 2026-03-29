@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from src.runtime import FfmpegRecordingService, LiveStatusProbe, RuntimeApiManager
+from src.runtime import FfmpegRecordingService, LiveStatusProbe, RuntimeApiManager, RuntimeConfigService
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -18,13 +18,16 @@ URL_CONFIG_PATH = BASE_DIR / "config" / "URL_config.ini"
 CONFIG_PATH = BASE_DIR / "config" / "config.ini"
 DOWNLOADS_PATH = BASE_DIR / "downloads"
 INDEX_FILE = BASE_DIR / "index.html"
-PROBE_INTERVAL_SECONDS = 8.0
 
 
 app = FastAPI(title="DouyinLiveRecorder API", version="0.1.0")
-manager = RuntimeApiManager(URL_CONFIG_PATH)
-probe_service = LiveStatusProbe(CONFIG_PATH)
-recorder_service = FfmpegRecordingService(CONFIG_PATH, default_download_root=DOWNLOADS_PATH)
+runtime_config_service = RuntimeConfigService(CONFIG_PATH)
+manager = RuntimeApiManager(
+    URL_CONFIG_PATH,
+    default_quality=runtime_config_service.get_values().default_quality,
+)
+probe_service = LiveStatusProbe(runtime_config_service)
+recorder_service = FfmpegRecordingService(runtime_config_service, default_download_root=DOWNLOADS_PATH)
 probe_stop_event = Event()
 probe_thread: Thread | None = None
 logger = logging.getLogger(__name__)
@@ -41,7 +44,7 @@ def _normalize_task_id(task_id: str) -> str:
 
 class TaskCreateRequest(BaseModel):
     url: str = Field(..., min_length=1)
-    quality: str = Field(default="原画")
+    quality: str | None = Field(default=None)
     anchor_name: str = Field(default="")
 
 
@@ -50,6 +53,17 @@ class TaskUpdateRequest(BaseModel):
     quality: str | None = None
     anchor_name: str | None = None
     enabled: bool | None = None
+
+
+def _refresh_runtime_config(*, force: bool = False) -> None:
+    result = runtime_config_service.reload_if_needed(force=force)
+    manager.set_default_quality(runtime_config_service.get_values().default_quality)
+
+    if not result.success and result.error:
+        logger.warning(result.error)
+    if result.changed:
+        for warning in result.warnings:
+            logger.warning("config warning: %s", warning)
 
 
 def _probe_task_state(task: dict | None) -> dict | None:
@@ -73,11 +87,12 @@ def _probe_task_state(task: dict | None) -> dict | None:
 
 
 def _run_probe_cycle() -> None:
+    _refresh_runtime_config()
     for item in manager.list_tasks():
         _probe_task_state(item)
 
 
-def _watch_recording_process(task_id: str, process) -> None:
+def _watch_recording_process(task_id: str, process, output_file: str) -> None:
     try:
         return_code = process.wait()
     except Exception as exc:  # pragma: no cover - subprocess path
@@ -86,7 +101,15 @@ def _watch_recording_process(task_id: str, process) -> None:
         manager.complete_recording_process(task_id, return_code=1)
         return
 
+    post_process_error = ""
+    if return_code == 0:
+        ok, output_or_error = recorder_service.finalize_recording(output_file)
+        if not ok:
+            post_process_error = output_or_error
+
     manager.complete_recording_process(task_id, return_code=return_code)
+    if post_process_error:
+        manager.mark_task_failed(task_id, post_process_error)
 
 
 def _start_recording_if_live(task: dict | None) -> tuple[dict | None, bool, str]:
@@ -134,7 +157,7 @@ def _start_recording_if_live(task: dict | None) -> tuple[dict | None, bool, str]
 
     watcher = Thread(
         target=_watch_recording_process,
-        args=(task_id, start_result.process),
+        args=(task_id, start_result.process, start_result.output_file),
         name=f"recording-watch-{task_id[:24]}",
         daemon=True,
     )
@@ -144,7 +167,11 @@ def _start_recording_if_live(task: dict | None) -> tuple[dict | None, bool, str]
 
 
 def _probe_loop() -> None:
-    while not probe_stop_event.wait(PROBE_INTERVAL_SECONDS):
+    while True:
+        _refresh_runtime_config()
+        probe_interval_seconds = runtime_config_service.get_values().probe_interval_seconds
+        if probe_stop_event.wait(probe_interval_seconds):
+            break
         try:
             _run_probe_cycle()
         except Exception:  # pragma: no cover - background runtime path
@@ -154,6 +181,7 @@ def _probe_loop() -> None:
 @app.on_event("startup")
 def on_startup() -> None:
     global probe_thread
+    _refresh_runtime_config(force=True)
     manager.bootstrap()
     _run_probe_cycle()
     probe_stop_event.clear()
@@ -185,6 +213,7 @@ def health() -> dict[str, str]:
 
 @app.get("/api/v1/tasks")
 def list_tasks(platform: str | None = Query(default=None)) -> dict[str, list[dict]]:
+    _refresh_runtime_config()
     items = manager.list_tasks()
     if platform:
         target = platform.strip().lower()
@@ -194,6 +223,7 @@ def list_tasks(platform: str | None = Query(default=None)) -> dict[str, list[dic
 
 @app.post("/api/v1/tasks")
 def create_task(payload: TaskCreateRequest) -> dict:
+    _refresh_runtime_config()
     item = manager.create_task(
         url=payload.url,
         quality=payload.quality,
@@ -205,6 +235,7 @@ def create_task(payload: TaskCreateRequest) -> dict:
 
 @app.put("/api/v1/tasks/{task_id:path}")
 def update_task(task_id: str, payload: TaskUpdateRequest) -> dict:
+    _refresh_runtime_config()
     normalized_task_id = _normalize_task_id(task_id)
     item = manager.update_task(
         normalized_task_id,
@@ -230,6 +261,7 @@ def delete_task(task_id: str) -> dict[str, bool]:
 
 @app.post("/api/v1/tasks/{task_id:path}/start")
 def start_task(task_id: str) -> dict:
+    _refresh_runtime_config()
     normalized_task_id = _normalize_task_id(task_id)
     item = manager.start_task(normalized_task_id)
     if item is None:
@@ -253,12 +285,26 @@ def stop_task(task_id: str, disable: bool = Query(default=False)) -> dict:
 
 @app.get("/api/v1/summary")
 def get_summary() -> dict:
+    _refresh_runtime_config()
     return manager.get_summary()
 
 
 @app.get("/api/v1/dashboard")
 def get_dashboard(platform: str | None = Query(default=None)) -> dict:
+    _refresh_runtime_config()
     return manager.get_dashboard(platform=platform)
+
+
+@app.get("/api/v1/config/snapshot")
+def get_config_snapshot() -> dict:
+    _refresh_runtime_config()
+    return runtime_config_service.get_snapshot(mask_sensitive=True)
+
+
+@app.post("/api/v1/config/reload")
+def reload_config() -> dict:
+    _refresh_runtime_config(force=True)
+    return runtime_config_service.get_snapshot(mask_sensitive=True)
 
 
 if INDEX_FILE.exists():
