@@ -32,6 +32,15 @@ Optional strict boundary check (requires a real live room URL):
 2. `export LIVE_TEST_QUALITY='原画'`
 3. `./scripts/phase6_config_validation.sh`
 
+If your user cannot access Docker socket, run with sudo-compose mode:
+
+1. `DOCKER_SUDO=1 bash scripts/phase6_config_validation.sh`
+
+Or grant docker group permission (recommended long-term):
+
+1. `sudo usermod -aG docker $USER`
+2. `newgrp docker`
+
 ## Pass Criteria
 
 - Script exits with code `0`.

@@ -33,10 +33,22 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 log "Working directory: $(pwd)"
 
-if command -v docker-compose >/dev/null 2>&1; then
-  DC=(docker-compose)
+if [[ "${DOCKER_SUDO:-0}" == "1" ]]; then
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "[ERROR] DOCKER_SUDO=1 is set but sudo is not available"
+    exit 1
+  fi
+  if command -v docker-compose >/dev/null 2>&1; then
+    DC=(sudo docker-compose)
+  else
+    DC=(sudo docker compose)
+  fi
 else
-  DC=(docker compose)
+  if command -v docker-compose >/dev/null 2>&1; then
+    DC=(docker-compose)
+  else
+    DC=(docker compose)
+  fi
 fi
 log "Using compose command: ${DC[*]}"
 
@@ -50,6 +62,14 @@ for cmd in docker curl python3; do
     exit 1
   fi
 done
+
+if ! "${DC[@]}" version >/dev/null 2>&1; then
+  echo "[ERROR] Docker/Compose is not accessible for current user"
+  echo "[HINT] If this is a docker.sock permission issue, run one of these:"
+  echo "[HINT]   1) sudo usermod -aG docker \$USER && newgrp docker"
+  echo "[HINT]   2) DOCKER_SUDO=1 bash scripts/phase6_config_validation.sh"
+  exit 1
+fi
 
 mkdir -p config logs backup_config downloads
 if [[ ! -f config/config.ini ]]; then
