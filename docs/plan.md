@@ -42,11 +42,12 @@
 4. 增加配置可观测性：暴露“当前生效配置快照（敏感字段脱敏）”与“最后重载时间/结果”。
 5. 保持兼容：若缺失配置项或格式异常，回退到默认值并记录可诊断错误，不阻塞服务主流程。
 
-## 三、当前状态（2026-03-29）
+## 三、当前状态（2026-03-30）
 1. Phase 4 验收通过：Phase 4 baseline PASS。
 2. Phase 5 验收通过：Phase 5 regression PASS。
 3. Phase 6 第一批专项验证通过：Phase 6 config validation PASS。
-4. 下一步：进入 Phase 6 第二批（网络与稳定性参数）接入与验证。
+4. Phase 6.2 第二批专项验证通过：Phase 6.2 network stability validation PASS。
+5. 下一步：进入 Phase 6 第三批（通知与凭据参数）接入与验证。
 
 ## 四、关键文件
 1. d:/Code/DouyinLiveRecorder/main.py：现有 config.ini 读取与运行时参数来源（迁移参考）。

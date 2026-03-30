@@ -6,7 +6,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from src import spider, stream
+from src import spider, stream, utils
 
 from .config_service import RuntimeConfigService
 
@@ -44,10 +44,11 @@ class LiveStatusProbe:
             self._config_service = RuntimeConfigService(config_file_path)
 
         self._lock = threading.RLock()
-        self._semaphore = threading.Semaphore(max_workers)
+        self._max_workers = max(1, int(max_workers))
+        self._semaphore = threading.Semaphore(self._max_workers)
 
         self._use_proxy = False
-        self._proxy_addr = ""
+        self._proxy_addr: str | None = None
         self._cookies: dict[str, str] = {}
 
         self._reload_config(force=True)
@@ -230,8 +231,13 @@ class LiveStatusProbe:
             self._config_service.reload_if_needed(force=force)
             values = self._config_service.get_values()
 
+            max_workers = max(1, int(values.max_request_workers))
+            if max_workers != self._max_workers:
+                self._semaphore = threading.Semaphore(max_workers)
+                self._max_workers = max_workers
+
             self._use_proxy = values.use_proxy
-            self._proxy_addr = values.proxy_addr
+            self._proxy_addr = utils.handle_proxy_addr(values.proxy_addr)
             self._cookies = dict(values.cookies)
 
     @staticmethod
@@ -264,7 +270,7 @@ class LiveStatusProbe:
         )
         title = str(port_info.get("title") or "")
 
-        # Some platforms occasionally omit/serialize live flags oddly while still returning a valid stream URL.
+        # 部分平台偶发不返回明确直播标记，但会返回有效流地址。
         if is_live is not True and record_url:
             is_live = True
 

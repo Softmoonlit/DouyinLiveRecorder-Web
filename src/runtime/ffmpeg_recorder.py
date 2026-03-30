@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 import re
 
+from src import utils
+
 from .config_service import RuntimeConfigService
 from .live_probe import LiveProbeResult
 
@@ -52,6 +54,7 @@ class FfmpegRecordingService:
         self._convert_to_mp4 = False
         self._convert_to_h264 = False
         self._delete_origin_after_convert = False
+        self._disk_space_limit_gb = 1.0
 
         self._reload_config(force=True)
 
@@ -73,6 +76,19 @@ class FfmpegRecordingService:
 
         output_path = self._build_output_path(task=task, probe_result=probe_result)
         output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            free_space_gb = utils.check_disk_capacity(output_path, show=False)
+            if free_space_gb < self._disk_space_limit_gb:
+                return RecordingStartResult(
+                    started=False,
+                    message=(
+                        f"disk free space {free_space_gb:.2f} GB below threshold "
+                        f"{self._disk_space_limit_gb:.2f} GB"
+                    ),
+                )
+        except Exception as exc:  # pragma: no cover - runtime filesystem path
+            logger.warning("disk capacity check failed for %s: %s", output_path, exc)
 
         ffmpeg_cmd = [
             ffmpeg_bin,
@@ -148,7 +164,7 @@ class FfmpegRecordingService:
         if not source.name:
             return True, output_file
 
-        # Segmented template path, no single-file conversion possible.
+        # 分段模板路径无法执行单文件转码。
         if "%" in source.name:
             return True, output_file
 
@@ -216,6 +232,7 @@ class FfmpegRecordingService:
             self._convert_to_mp4 = values.convert_to_mp4
             self._convert_to_h264 = values.convert_to_h264
             self._delete_origin_after_convert = values.delete_origin_after_convert
+            self._disk_space_limit_gb = max(0.0, float(values.disk_space_limit_gb))
 
     def _build_output_path(self, *, task: dict, probe_result: LiveProbeResult) -> Path:
         now = datetime.now()

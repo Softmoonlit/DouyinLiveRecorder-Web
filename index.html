@@ -301,6 +301,149 @@
             border-color: #bce6c9;
             color: #0e6830;
         }
+        .tab-switch {
+            margin-top: 10px;
+            display: inline-flex;
+            padding: 4px;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            background: #f2f8fc;
+            gap: 4px;
+        }
+
+        .tab-btn {
+            border: 0;
+            background: transparent;
+            border-radius: 8px;
+            padding: 6px 12px;
+            font: inherit;
+            color: var(--muted);
+            cursor: pointer;
+        }
+
+        .tab-btn.active {
+            background: #fff;
+            color: var(--ink);
+            box-shadow: 0 4px 12px rgba(11, 31, 53, 0.08);
+        }
+
+        .tab-pane {
+            display: none;
+        }
+
+        .tab-pane.active {
+            display: block;
+            animation: fade-up .2s ease;
+        }
+
+        .settings-shell {
+            border-top: 1px solid var(--line);
+            padding: 18px;
+            display: grid;
+            gap: 14px;
+        }
+
+        .settings-head h2 {
+            margin: 0;
+            font-size: 18px;
+        }
+
+        .settings-head p {
+            margin: 6px 0 0;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .settings-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .settings-group {
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            background: #fff;
+            padding: 12px;
+            display: grid;
+            gap: 10px;
+        }
+
+        .settings-group legend {
+            padding: 0 6px;
+            color: var(--ink);
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .settings-item {
+            display: grid;
+            gap: 6px;
+        }
+
+        .settings-item label {
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .settings-item input,
+        .settings-item select {
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 8px 10px;
+            font: inherit;
+            background: #fff;
+            color: var(--ink);
+        }
+
+        .settings-item-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .settings-item-row label {
+            font-size: 13px;
+            color: var(--ink);
+        }
+
+        .settings-item-row input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+        }
+
+        .settings-effect {
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .settings-actions {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .settings-actions .buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        .settings-status {
+            min-height: 20px;
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .settings-status.ok {
+            color: #0f6f30;
+        }
+
+        .settings-status.error {
+            color: #931616;
+        }
 
         .footer {
             color: rgba(255, 255, 255, 0.86);
@@ -419,6 +562,10 @@
                 <div>
                     <h1>录制任务控制台</h1>
                     <p class="sub">任务表优先接 /api/v1/tasks，状态看板优先接 /api/v1/dashboard，默认 3 秒轮询。</p>
+                    <div class="tab-switch" id="tabSwitch">
+                        <button type="button" class="tab-btn active" data-tab="tasks">任务面板</button>
+                        <button type="button" class="tab-btn" data-tab="settings">设置</button>
+                    </div>
                 </div>
                 <div class="toolbar">
                     <label for="platformFilter">平台筛选</label>
@@ -429,8 +576,8 @@
                     <button id="togglePolling" class="btn btn-main">暂停轮询</button>
                 </div>
             </div>
-
-            <div class="stats" id="stats"></div>
+            <section id="tasksTab" class="tab-pane active">
+                <div class="stats" id="stats"></div>
             <div class="boards">
                 <section class="board">
                     <h2>正在直播</h2>
@@ -452,7 +599,6 @@
                 <input id="newTaskAnchor" type="text" placeholder="主播昵称（可选）">
                 <button type="submit" class="btn btn-main">新增任务</button>
             </form>
-
             <div class="table-wrap">
                 <table>
                     <thead>
@@ -471,6 +617,109 @@
                     <tbody id="taskTableBody"></tbody>
                 </table>
             </div>
+            </section>
+
+            <section id="settingsTab" class="tab-pane">
+                <div class="settings-shell">
+                    <div class="settings-head">
+                        <h2>运行参数设置</h2>
+                        <p>仅开放第一批与第二批参数。保存后将自动重载配置。</p>
+                    </div>
+                    <form id="settingsForm">
+                        <div class="settings-grid">
+                            <fieldset class="settings-group">
+                                <legend>第一批（录制核心）</legend>
+                                <div class="settings-item">
+                                    <label for="settingVideoSavePath">视频保存路径</label>
+                                    <input id="settingVideoSavePath" type="text" placeholder="留空则使用默认 downloads 目录">
+                                    <div class="settings-effect">新增任务立即生效</div>
+                                </div>
+                                <div class="settings-item">
+                                    <label for="settingDefaultQuality">默认画质</label>
+                                    <select id="settingDefaultQuality">
+                                        <option value="原画">原画</option>
+                                        <option value="蓝光">蓝光</option>
+                                        <option value="超清">超清</option>
+                                        <option value="高清">高清</option>
+                                        <option value="标清">标清</option>
+                                        <option value="流畅">流畅</option>
+                                    </select>
+                                    <div class="settings-effect">新增任务立即生效</div>
+                                </div>
+                                <div class="settings-item">
+                                    <label for="settingSaveFormat">保存格式</label>
+                                    <select id="settingSaveFormat">
+                                        <option value="TS">TS</option>
+                                        <option value="FLV">FLV</option>
+                                        <option value="MP4">MP4</option>
+                                        <option value="MKV">MKV</option>
+                                    </select>
+                                    <div class="settings-effect">新增任务立即生效</div>
+                                </div>
+                                <div class="settings-item-row">
+                                    <label for="settingSplitRecording">开启分段录制</label>
+                                    <input id="settingSplitRecording" type="checkbox">
+                                </div>
+                                <div class="settings-item">
+                                    <label for="settingSplitTime">分段时长(秒)</label>
+                                    <input id="settingSplitTime" type="number" min="60" max="43200">
+                                </div>
+                                <div class="settings-item-row">
+                                    <label for="settingConvertToMp4">录制完成自动转 MP4</label>
+                                    <input id="settingConvertToMp4" type="checkbox">
+                                </div>
+                                <div class="settings-item-row">
+                                    <label for="settingConvertToH264">MP4 重新编码为 H264</label>
+                                    <input id="settingConvertToH264" type="checkbox">
+                                </div>
+                                <div class="settings-item-row">
+                                    <label for="settingDeleteOrigin">转码后删除原文件</label>
+                                    <input id="settingDeleteOrigin" type="checkbox">
+                                </div>
+                                <div class="settings-item">
+                                    <label for="settingProbeInterval">循环间隔(秒)</label>
+                                    <input id="settingProbeInterval" type="number" min="2" max="300">
+                                    <div class="settings-effect">下轮循环生效</div>
+                                </div>
+                            </fieldset>
+
+                            <fieldset class="settings-group">
+                                <legend>第二批（网络与稳定性）</legend>
+                                <div class="settings-item-row">
+                                    <label for="settingUseProxy">启用代理</label>
+                                    <input id="settingUseProxy" type="checkbox">
+                                </div>
+                                <div class="settings-item">
+                                    <label for="settingProxyAddr">代理地址</label>
+                                    <input id="settingProxyAddr" type="text" placeholder="例如 http://127.0.0.1:7890">
+                                    <div class="settings-effect">下轮探测生效</div>
+                                </div>
+                                <div class="settings-item">
+                                    <label for="settingMaxWorkers">并发线程数</label>
+                                    <input id="settingMaxWorkers" type="number" min="1" max="64">
+                                    <div class="settings-effect">下轮探测生效</div>
+                                </div>
+                                <div class="settings-item-row">
+                                    <label for="settingForceHttps">强制 HTTPS 录制</label>
+                                    <input id="settingForceHttps" type="checkbox">
+                                </div>
+                                <div class="settings-item">
+                                    <label for="settingDiskLimit">空间阈值(GB)</label>
+                                    <input id="settingDiskLimit" type="number" min="0" max="10240" step="0.1">
+                                    <div class="settings-effect">新增任务立即生效</div>
+                                </div>
+                            </fieldset>
+                        </div>
+                        <div class="settings-actions">
+                            <div id="settingsStatus" class="settings-status"></div>
+                            <div class="buttons">
+                                <button type="button" id="settingsReload" class="btn">重新读取</button>
+                                <button type="submit" id="settingsSave" class="btn btn-main">保存设置</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </section>
         </section>
         <div class="footer">DouyinLiveRecorder Web Console (Phase 3)</div>
     </div>
@@ -514,6 +763,10 @@
             dashboard: null,
             loading: false,
             editingTaskId: "",
+            activeTab: "tasks",
+            settingsLoaded: false,
+            settingsSaving: false,
+            settingsSchemaMap: {},
         };
 
         const dom = {
@@ -536,6 +789,45 @@
             editTaskUrl: document.getElementById("editTaskUrl"),
             editTaskQuality: document.getElementById("editTaskQuality"),
             editTaskAnchor: document.getElementById("editTaskAnchor"),
+            tabSwitch: document.getElementById("tabSwitch"),
+            tasksTab: document.getElementById("tasksTab"),
+            settingsTab: document.getElementById("settingsTab"),
+            toolbar: document.querySelector(".toolbar"),
+            settingsForm: document.getElementById("settingsForm"),
+            settingsReload: document.getElementById("settingsReload"),
+            settingsSave: document.getElementById("settingsSave"),
+            settingsStatus: document.getElementById("settingsStatus"),
+            settingVideoSavePath: document.getElementById("settingVideoSavePath"),
+            settingDefaultQuality: document.getElementById("settingDefaultQuality"),
+            settingSplitRecording: document.getElementById("settingSplitRecording"),
+            settingSplitTime: document.getElementById("settingSplitTime"),
+            settingSaveFormat: document.getElementById("settingSaveFormat"),
+            settingConvertToMp4: document.getElementById("settingConvertToMp4"),
+            settingConvertToH264: document.getElementById("settingConvertToH264"),
+            settingDeleteOrigin: document.getElementById("settingDeleteOrigin"),
+            settingProbeInterval: document.getElementById("settingProbeInterval"),
+            settingUseProxy: document.getElementById("settingUseProxy"),
+            settingProxyAddr: document.getElementById("settingProxyAddr"),
+            settingMaxWorkers: document.getElementById("settingMaxWorkers"),
+            settingForceHttps: document.getElementById("settingForceHttps"),
+            settingDiskLimit: document.getElementById("settingDiskLimit"),
+        };
+
+        const SETTING_INPUT_MAP = {
+            video_save_path: "settingVideoSavePath",
+            default_quality: "settingDefaultQuality",
+            split_recording: "settingSplitRecording",
+            split_time_seconds: "settingSplitTime",
+            save_format: "settingSaveFormat",
+            convert_to_mp4: "settingConvertToMp4",
+            convert_to_h264: "settingConvertToH264",
+            delete_origin_after_convert: "settingDeleteOrigin",
+            probe_interval_seconds: "settingProbeInterval",
+            use_proxy: "settingUseProxy",
+            proxy_addr: "settingProxyAddr",
+            max_request_workers: "settingMaxWorkers",
+            force_https_recording: "settingForceHttps",
+            disk_space_limit_gb: "settingDiskLimit",
         };
 
         function openEditModal(task) {
@@ -589,7 +881,7 @@
                     const payload = await response.json();
                     detail = payload.detail || payload.message || detail;
                 } catch (e) {
-                    // Keep status text when body is not JSON.
+                    // 保持原始状态文本即可。
                 }
                 throw new Error(detail || "请求失败");
             }
@@ -612,27 +904,6 @@
                 return "<span class=\"chip\">-</span>";
             }
             return `<span class=\"chip ${type}\">${escapeHtml(text)}</span>`;
-        }
-
-        function toLiveText(liveStatus) {
-            const map = {
-                live: "直播中",
-                not_live: "未开播",
-                disabled: "已禁用",
-                unknown: "未知",
-            };
-            return map[liveStatus] || liveStatus || "未知";
-        }
-
-        function toRecordingText(recordingStatus) {
-            const map = {
-                recording: "录制中",
-                stopping: "停止中",
-                failed: "失败",
-                idle: "空闲",
-                disabled: "已禁用",
-            };
-            return map[recordingStatus] || recordingStatus || "未知";
         }
 
         function liveChip(liveStatus) {
@@ -871,19 +1142,238 @@
             dom.newTaskAnchor.value = "";
         }
 
+        function showSettingsStatus(message, kind = "") {
+            dom.settingsStatus.textContent = message || "";
+            dom.settingsStatus.classList.remove("ok", "error");
+            if (kind) {
+                dom.settingsStatus.classList.add(kind);
+            }
+        }
+
+        function syncSettingDependencies() {
+            const splitEnabled = Boolean(dom.settingSplitRecording.checked);
+            dom.settingSplitTime.disabled = !splitEnabled;
+
+            const convertEnabled = Boolean(dom.settingConvertToMp4.checked);
+            dom.settingConvertToH264.disabled = !convertEnabled;
+            dom.settingDeleteOrigin.disabled = !convertEnabled;
+
+            const proxyEnabled = Boolean(dom.settingUseProxy.checked);
+            dom.settingProxyAddr.disabled = !proxyEnabled;
+        }
+
+        function applySettingsValues(values) {
+            Object.entries(SETTING_INPUT_MAP).forEach(([field, domKey]) => {
+                const element = dom[domKey];
+                if (!element) {
+                    return;
+                }
+
+                const value = values[field];
+                if (element.type === "checkbox") {
+                    element.checked = Boolean(value);
+                } else if (value === undefined || value === null) {
+                    element.value = "";
+                } else {
+                    element.value = String(value);
+                }
+            });
+
+            syncSettingDependencies();
+        }
+
+        function collectSettingsPayload() {
+            const fields = {};
+            const errors = [];
+
+            Object.entries(SETTING_INPUT_MAP).forEach(([field, domKey]) => {
+                const element = dom[domKey];
+                const schema = state.settingsSchemaMap[field];
+                if (!element || !schema) {
+                    return;
+                }
+
+                if (schema.type === "bool") {
+                    fields[field] = Boolean(element.checked);
+                    return;
+                }
+
+                if (schema.type === "int") {
+                    const value = Number.parseInt(element.value, 10);
+                    if (Number.isNaN(value)) {
+                        errors.push(`${schema.label} 需要整数`);
+                        return;
+                    }
+                    if (schema.minimum !== undefined && value < schema.minimum) {
+                        errors.push(`${schema.label} 不能小于 ${schema.minimum}`);
+                        return;
+                    }
+                    if (schema.maximum !== undefined && value > schema.maximum) {
+                        errors.push(`${schema.label} 不能大于 ${schema.maximum}`);
+                        return;
+                    }
+                    fields[field] = value;
+                    return;
+                }
+
+                if (schema.type === "float") {
+                    const value = Number.parseFloat(element.value);
+                    if (Number.isNaN(value)) {
+                        errors.push(`${schema.label} 需要数字`);
+                        return;
+                    }
+                    if (schema.minimum !== undefined && value < schema.minimum) {
+                        errors.push(`${schema.label} 不能小于 ${schema.minimum}`);
+                        return;
+                    }
+                    if (schema.maximum !== undefined && value > schema.maximum) {
+                        errors.push(`${schema.label} 不能大于 ${schema.maximum}`);
+                        return;
+                    }
+                    fields[field] = value;
+                    return;
+                }
+
+                const value = String(element.value || "").trim();
+                if (schema.type === "enum" && Array.isArray(schema.choices) && !schema.choices.includes(value)) {
+                    errors.push(`${schema.label} 可选值: ${schema.choices.join("/")}`);
+                    return;
+                }
+                fields[field] = value;
+            });
+
+            if (errors.length) {
+                return {
+                    ok: false,
+                    fields: {},
+                    message: errors.join("；"),
+                };
+            }
+
+            return {
+                ok: true,
+                fields,
+                message: "",
+            };
+        }
+
+        async function loadSettings(force = false) {
+            if (state.settingsLoaded && !force) {
+                return;
+            }
+
+            try {
+                showSettingsStatus("正在读取设置...");
+                const payload = await apiRequest("/api/v1/config/settings");
+                const schemaList = Array.isArray(payload.schema) ? payload.schema : [];
+                state.settingsSchemaMap = Object.fromEntries(schemaList.map((item) => [item.field, item]));
+                applySettingsValues(payload.values || {});
+                state.settingsLoaded = true;
+                showSettingsStatus("设置已同步", "ok");
+            } catch (error) {
+                showSettingsStatus(`读取设置失败: ${error.message || error}`, "error");
+            }
+        }
+
+        function formatSettingsErrors(errors) {
+            if (!errors || typeof errors !== "object") {
+                return "保存失败";
+            }
+            const lines = Object.entries(errors).map(([field, msg]) => {
+                const schema = state.settingsSchemaMap[field];
+                const label = schema ? schema.label : field;
+                return `${label}: ${msg}`;
+            });
+            return lines.length ? lines.join("；") : "保存失败";
+        }
+
+        async function saveSettings(event) {
+            event.preventDefault();
+            if (state.settingsSaving) {
+                return;
+            }
+
+            const result = collectSettingsPayload();
+            if (!result.ok) {
+                showSettingsStatus(result.message, "error");
+                return;
+            }
+
+            state.settingsSaving = true;
+            dom.settingsSave.disabled = true;
+            showSettingsStatus("正在保存设置...");
+
+            try {
+                const response = await apiRequest("/api/v1/config/update-settings", {
+                    method: "POST",
+                    body: JSON.stringify({ fields: result.fields }),
+                });
+
+                if (!response.success) {
+                    showSettingsStatus(formatSettingsErrors(response.errors), "error");
+                    return;
+                }
+
+                const payload = response.settings || {};
+                const schemaList = Array.isArray(payload.schema) ? payload.schema : [];
+                state.settingsSchemaMap = Object.fromEntries(schemaList.map((item) => [item.field, item]));
+                applySettingsValues(payload.values || {});
+                state.settingsLoaded = true;
+                showSettingsStatus("设置已保存并生效", "ok");
+
+                if (state.activeTab === "tasks") {
+                    await loadData();
+                }
+            } catch (error) {
+                showSettingsStatus(`保存失败: ${error.message || error}`, "error");
+            } finally {
+                state.settingsSaving = false;
+                dom.settingsSave.disabled = false;
+            }
+        }
+
+        function refreshPollingTimer() {
+            if (state.pollTimer) {
+                clearInterval(state.pollTimer);
+                state.pollTimer = null;
+            }
+
+            if (state.pollingEnabled && state.activeTab === "tasks") {
+                state.pollTimer = setInterval(loadData, POLL_INTERVAL_MS);
+            }
+        }
+
         function startPolling() {
-            stopPolling();
             state.pollingEnabled = true;
             dom.togglePolling.textContent = "暂停轮询";
-            state.pollTimer = setInterval(loadData, POLL_INTERVAL_MS);
+            refreshPollingTimer();
         }
 
         function stopPolling() {
             state.pollingEnabled = false;
             dom.togglePolling.textContent = "启动轮询";
-            if (state.pollTimer) {
-                clearInterval(state.pollTimer);
-                state.pollTimer = null;
+            refreshPollingTimer();
+        }
+
+        function setActiveTab(tabName) {
+            const target = tabName === "settings" ? "settings" : "tasks";
+            state.activeTab = target;
+
+            dom.tasksTab.classList.toggle("active", target === "tasks");
+            dom.settingsTab.classList.toggle("active", target === "settings");
+
+            dom.toolbar.style.display = target === "tasks" ? "flex" : "none";
+
+            dom.tabSwitch.querySelectorAll(".tab-btn").forEach((button) => {
+                button.classList.toggle("active", button.dataset.tab === target);
+            });
+
+            refreshPollingTimer();
+
+            if (target === "settings") {
+                loadSettings(false);
+            } else {
+                loadData();
             }
         }
 
@@ -901,6 +1391,28 @@
                 startPolling();
             }
         });
+
+        dom.tabSwitch.addEventListener("click", (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) {
+                return;
+            }
+            const button = target.closest("button[data-tab]");
+            if (!button) {
+                return;
+            }
+            setActiveTab(button.dataset.tab || "tasks");
+        });
+
+        dom.settingsReload.addEventListener("click", () => {
+            state.settingsLoaded = false;
+            loadSettings(true);
+        });
+
+        dom.settingsForm.addEventListener("submit", saveSettings);
+        dom.settingSplitRecording.addEventListener("change", syncSettingDependencies);
+        dom.settingConvertToMp4.addEventListener("change", syncSettingDependencies);
+        dom.settingUseProxy.addEventListener("change", syncSettingDependencies);
 
         dom.createTaskForm.addEventListener("submit", async (event) => {
             event.preventDefault();
@@ -943,6 +1455,7 @@
 
             await handleTaskAction(action, taskId);
         });
+
         dom.editModalClose.addEventListener("click", closeEditModal);
         dom.editTaskCancel.addEventListener("click", closeEditModal);
 
@@ -991,7 +1504,7 @@
         });
 
         startPolling();
-        loadData();
+        setActiveTab("tasks");
     </script>
 </body>
 </html>

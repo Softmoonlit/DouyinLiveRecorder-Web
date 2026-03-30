@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from threading import Event, Thread
+from typing import Any
 from urllib.parse import unquote
 
 from fastapi import FastAPI, HTTPException, Query
@@ -55,6 +56,10 @@ class TaskUpdateRequest(BaseModel):
     enabled: bool | None = None
 
 
+class ConfigUpdateRequest(BaseModel):
+    fields: dict[str, Any] = Field(default_factory=dict)
+
+
 def _refresh_runtime_config(*, force: bool = False) -> None:
     result = runtime_config_service.reload_if_needed(force=force)
     manager.set_default_quality(runtime_config_service.get_values().default_quality)
@@ -95,7 +100,7 @@ def _run_probe_cycle() -> None:
 def _watch_recording_process(task_id: str, process, output_file: str) -> None:
     try:
         return_code = process.wait()
-    except Exception as exc:  # pragma: no cover - subprocess path
+    except Exception as exc:  # pragma: no cover
         logger.exception("recording watcher failed for %s", task_id)
         manager.mark_task_failed(task_id, f"recording watcher failed: {exc}")
         manager.complete_recording_process(task_id, return_code=1)
@@ -174,7 +179,7 @@ def _probe_loop() -> None:
             break
         try:
             _run_probe_cycle()
-        except Exception:  # pragma: no cover - background runtime path
+        except Exception:  # pragma: no cover
             logger.exception("live probe cycle failed")
 
 
@@ -293,6 +298,19 @@ def get_summary() -> dict:
 def get_dashboard(platform: str | None = Query(default=None)) -> dict:
     _refresh_runtime_config()
     return manager.get_dashboard(platform=platform)
+
+
+@app.get("/api/v1/config/settings")
+def get_config_settings() -> dict:
+    _refresh_runtime_config()
+    return runtime_config_service.get_settings_payload()
+
+
+@app.post("/api/v1/config/update-settings")
+def update_config_settings(payload: ConfigUpdateRequest) -> dict:
+    result = runtime_config_service.update_settings(payload.fields)
+    _refresh_runtime_config(force=True)
+    return result
 
 
 @app.get("/api/v1/config/snapshot")
