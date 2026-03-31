@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import html
 import json
 import logging
 import os
@@ -129,7 +128,7 @@ def _build_ui_bootstrap_html() -> str:
         "default": UI_DEFAULT_VERSION,
         "sessionKey": UI_SESSION_STORAGE_KEY,
     }
-    config_json = html.escape(json.dumps(config, ensure_ascii=False))
+    config_json = json.dumps(config, ensure_ascii=False).replace("</", "<\/")
 
     return f"""<!DOCTYPE html>
 <html lang=\"zh-CN\">
@@ -183,7 +182,7 @@ def _build_ui_bootstrap_html() -> str:
 
             var config = {{ allowed: ['v1'], default: 'v1', sessionKey: 'douyin_live_recorder_ui_version' }};
             try {{
-                config = JSON.parse(configEl.textContent || '{}');
+                config = JSON.parse(configEl.textContent || '{{}}');
             }} catch (e) {{
                 window.location.replace('/ui/v1');
                 return;
@@ -538,8 +537,9 @@ def reload_config() -> dict:
     return runtime_config_service.get_snapshot(mask_sensitive=True)
 
 
-if INDEX_FILE.exists():
-    app.mount("/static", StaticFiles(directory=str(BASE_DIR)), name="static")
+STATIC_DIR = BASE_DIR / "static"
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.get("/")
