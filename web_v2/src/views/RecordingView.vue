@@ -51,6 +51,10 @@
         </div>
       </n-alert>
 
+      <n-alert type="warning" :show-icon="false">
+        默认仅支持“当前页全选”；如需“当前筛选结果全选”，需完成二次确认。
+      </n-alert>
+
       <div class="form-grid">
         <n-input v-model:value="createForm.url" placeholder="直播间 URL（必填）" />
         <n-input v-model:value="createForm.quality" placeholder="画质，例如 原画" />
@@ -58,7 +62,7 @@
         <n-button type="primary" @click="submitCreateTask">新增任务</n-button>
       </div>
 
-      <div class="column-box">
+      <div v-if="isDesktop" class="column-box">
         <div class="toolbar-row" style="justify-content: space-between">
           <strong>列表列显隐</strong>
           <span class="surface-sub">设置会保存到浏览器本地</span>
@@ -90,7 +94,7 @@
       </div>
     </div>
 
-    <div class="table-wrap">
+    <div v-if="isDesktop" class="table-wrap">
       <table class="task-table">
         <thead>
           <tr>
@@ -139,6 +143,74 @@
       </table>
     </div>
 
+    <div v-else class="block" style="display: grid; gap: 10px; border-top: 1px solid var(--line)">
+      <div v-if="!pagedTasks.length" class="inline-empty">当前筛选下暂无任务</div>
+
+      <article v-for="task in pagedTasks" :key="task.task_id" class="mobile-task-card">
+        <div class="mobile-task-main">
+          <div class="mobile-task-left">
+            <n-checkbox :checked="selectedTaskIds.includes(task.task_id)" @update:checked="(v) => toggleRow(task.task_id, v)" />
+            <div>
+              <div class="mobile-task-title">{{ task.anchor_name || task.url }}</div>
+              <div class="mobile-task-sub">{{ task.platform || 'other' }}</div>
+            </div>
+          </div>
+
+          <n-button class="touch-btn" secondary @click="toggleMobileExpand(task.task_id)">
+            {{ isMobileExpanded(task.task_id) ? '收起详情' : '展开详情' }}
+          </n-button>
+        </div>
+
+        <div class="mobile-p0-status">
+          <n-tag :type="liveTagType(task.live_status)" size="small">{{ liveStatusText(task.live_status) }}</n-tag>
+          <n-tag :type="recordingTagType(task.recording_status)" size="small">{{ recordingStatusText(task.recording_status) }}</n-tag>
+        </div>
+
+        <div v-if="isTablet" class="mobile-p1-row">
+          <span>最近开播：{{ recentLiveTimeText(task) }}</span>
+          <span>录制时长：{{ recordingDurationText(task) }}</span>
+        </div>
+
+        <div v-if="isMobileExpanded(task.task_id)" class="mobile-detail">
+          <div class="mobile-detail-grid">
+            <div>
+              <div class="mobile-detail-label">URL</div>
+              <div class="mobile-detail-value">{{ task.url }}</div>
+            </div>
+            <div>
+              <div class="mobile-detail-label">画质</div>
+              <div class="mobile-detail-value">{{ task.quality || '--' }}</div>
+            </div>
+            <div>
+              <div class="mobile-detail-label">录制开始</div>
+              <div class="mobile-detail-value">{{ formatDateTime(task.started_at as number | null | undefined) }}</div>
+            </div>
+            <div>
+              <div class="mobile-detail-label">错误信息</div>
+              <div class="mobile-detail-value">{{ task.error_message || '--' }}</div>
+            </div>
+            <div v-if="isPhone">
+              <div class="mobile-detail-label">最近开播</div>
+              <div class="mobile-detail-value">{{ recentLiveTimeText(task) }}</div>
+            </div>
+            <div v-if="isPhone">
+              <div class="mobile-detail-label">录制时长</div>
+              <div class="mobile-detail-value">{{ recordingDurationText(task) }}</div>
+            </div>
+          </div>
+
+          <div class="task-actions mobile-task-actions">
+            <n-button class="touch-btn" type="success" @click="runSingleAction('start', task)">开始</n-button>
+            <n-button class="touch-btn" type="warning" @click="runSingleAction('stop', task)">停止</n-button>
+            <n-button class="touch-btn" @click="runSingleAction('enable', task)">恢复</n-button>
+            <n-button class="touch-btn" type="error" ghost @click="runSingleAction('disable', task)">禁用</n-button>
+            <n-button class="touch-btn" @click="openEdit(task)">编辑</n-button>
+            <n-button class="touch-btn" type="error" @click="runSingleAction('delete', task)">删除</n-button>
+          </div>
+        </div>
+      </article>
+    </div>
+
     <div class="block" style="border-top: 1px solid var(--line); display: flex; justify-content: flex-end">
       <n-pagination
         :page="page"
@@ -181,7 +253,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   NAlert,
   NButton,
@@ -237,6 +309,10 @@ const page = ref(1)
 const pageSize = ref(20)
 const selectedTaskIds = ref<string[]>([])
 const selectAcrossFilter = ref(false)
+const viewportWidth = ref(window.innerWidth)
+const expandedMobileRows = ref<string[]>([])
+const nowSeconds = ref(Math.floor(Date.now() / 1000))
+let durationTicker: number | null = null
 
 const editingVisible = ref(false)
 const batchResultVisible = ref(false)
@@ -294,6 +370,10 @@ const boardFilterText = computed(() => {
   if (props.boardFilter === 'not_live') return '未开播'
   return ''
 })
+
+const isPhone = computed(() => viewportWidth.value < 768)
+const isTablet = computed(() => viewportWidth.value >= 768 && viewportWidth.value < 1080)
+const isDesktop = computed(() => viewportWidth.value >= 1080)
 
 const platformOptions = computed(() => {
   const platforms = Array.from(
@@ -436,6 +516,7 @@ watch(filterFingerprint, (_, oldValue) => {
     return
   }
   page.value = 1
+  expandedMobileRows.value = []
   if (selectAcrossFilter.value) {
     selectedTaskIds.value = []
     selectAcrossFilter.value = false
@@ -451,6 +532,62 @@ watch(pageCount, (value) => {
 
 const isColumnVisible = (column: string) => visibleColumns.value.includes(column)
 
+const toggleMobileExpand = (taskId: string) => {
+  const idSet = new Set(expandedMobileRows.value)
+  if (idSet.has(taskId)) {
+    idSet.delete(taskId)
+  } else {
+    idSet.add(taskId)
+  }
+  expandedMobileRows.value = Array.from(idSet)
+}
+
+const isMobileExpanded = (taskId: string) => expandedMobileRows.value.includes(taskId)
+
+const formatDuration = (seconds: number): string => {
+  const safe = Math.max(0, Math.floor(seconds))
+  const day = Math.floor(safe / 86400)
+  const hour = Math.floor((safe % 86400) / 3600)
+  const minute = Math.floor((safe % 3600) / 60)
+  if (day > 0) {
+    return `${day}d ${hour}h ${minute}m`
+  }
+  return `${hour}h ${minute}m`
+}
+
+const recentLiveTimeText = (task: TaskItem): string => {
+  const startedAt = Number(task.started_at || 0)
+  if (!startedAt) {
+    return '--'
+  }
+  return formatDateTime(startedAt)
+}
+
+const recordingDurationText = (task: TaskItem): string => {
+  const startedAt = Number(task.started_at || 0)
+  const recordingStatus = String(task.recording_status || '').toLowerCase()
+  if (!startedAt || (recordingStatus !== 'recording' && recordingStatus !== 'stopping')) {
+    return '--'
+  }
+  return formatDuration(nowSeconds.value - startedAt)
+}
+
+const liveTagType = (value: string | undefined): 'success' | 'default' | 'error' | 'warning' => {
+  const normalized = String(value || '').toLowerCase()
+  if (normalized === 'live') return 'success'
+  if (normalized === 'disabled') return 'error'
+  if (normalized === 'not_live') return 'default'
+  return 'warning'
+}
+
+const recordingTagType = (value: string | undefined): 'success' | 'default' | 'error' | 'warning' => {
+  const normalized = String(value || '').toLowerCase()
+  if (normalized === 'recording') return 'success'
+  if (normalized === 'stopping') return 'warning'
+  if (normalized === 'failed' || normalized === 'disabled') return 'error'
+  return 'default'
+}
+
 const onSearchChange = (value: string) => {
   searchKeyword.value = value || ''
 }
@@ -465,11 +602,15 @@ const onSortOrderChange = (value: 'asc' | 'desc') => {
 
 const onPageChange = (value: number) => {
   page.value = value
+  if (!isDesktop.value) {
+    expandedMobileRows.value = []
+  }
 }
 
 const onPageSizeChange = (value: number) => {
   pageSize.value = value
   page.value = 1
+  expandedMobileRows.value = []
 }
 
 const toggleRow = (taskId: string, checked: boolean) => {
@@ -608,14 +749,13 @@ const executeTaskAction = async (action: string, task: TaskItem): Promise<{ ok: 
 }
 
 const runSingleAction = async (action: string, task: TaskItem) => {
-  if (action === 'delete') {
-    const ok = window.confirm(`确认删除任务：${task.anchor_name || task.url} 吗？`)
-    if (!ok) {
-      return
+  if (action === 'stop' || action === 'delete' || action === 'disable') {
+    const actionLabelMap: Record<string, string> = {
+      stop: '停止录制',
+      delete: '删除任务',
+      disable: '禁用任务',
     }
-  }
-  if (action === 'disable') {
-    const ok = window.confirm(`确认禁用任务：${task.anchor_name || task.url} 吗？`)
+    const ok = window.confirm(`确认${actionLabelMap[action]}吗？影响 1 条任务（${task.anchor_name || task.url}）`)
     if (!ok) {
       return
     }
@@ -678,4 +818,23 @@ const runBatchAction = async (action: 'start' | 'stop' | 'enable' | 'disable' | 
   clearSelection()
   emit('refresh')
 }
+
+const handleResize = () => {
+  viewportWidth.value = window.innerWidth
+}
+
+onMounted(() => {
+  window.addEventListener('resize', handleResize)
+  durationTicker = window.setInterval(() => {
+    nowSeconds.value = Math.floor(Date.now() / 1000)
+  }, 1000)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', handleResize)
+  if (durationTicker !== null) {
+    window.clearInterval(durationTicker)
+    durationTicker = null
+  }
+})
 </script>
