@@ -8,6 +8,8 @@ services:
       - "8000:8000"
     environment:
       - TERM=xterm-256color
+      - DOUYIN_WEB_UI_ALLOWED=${DOUYIN_WEB_UI_ALLOWED:-v1,v2}
+      - DOUYIN_WEB_UI_DEFAULT=${DOUYIN_WEB_UI_DEFAULT:-v1}
     init: true
     tty: true
     stdin_open: true

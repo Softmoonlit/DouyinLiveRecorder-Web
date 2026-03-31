@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import html
+import json
 import logging
+import os
 from pathlib import Path
+import shutil
 from threading import Event, Thread
+import time
 from typing import Any
 from urllib.parse import unquote
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -19,6 +24,47 @@ URL_CONFIG_PATH = BASE_DIR / "config" / "URL_config.ini"
 CONFIG_PATH = BASE_DIR / "config" / "config.ini"
 DOWNLOADS_PATH = BASE_DIR / "downloads"
 INDEX_FILE = BASE_DIR / "index.html"
+V2_DIST_DIR = BASE_DIR / "static" / "web-v2"
+V2_INDEX_FILE = V2_DIST_DIR / "index.html"
+UI_SESSION_STORAGE_KEY = "douyin_live_recorder_ui_version"
+
+
+def _normalize_ui_version(value: str | None) -> str:
+    return str(value or "").strip().lower()
+
+
+def _parse_allowed_ui_versions() -> tuple[str, ...]:
+    raw = os.getenv("DOUYIN_WEB_UI_ALLOWED", "v1,v2")
+    values: list[str] = []
+    seen: set[str] = set()
+    for item in raw.split(","):
+        version = _normalize_ui_version(item)
+        if not version:
+            continue
+        if version in seen:
+            continue
+        seen.add(version)
+        values.append(version)
+
+    if not values:
+        return ("v1",)
+    if "v1" not in seen:
+        values.append("v1")
+    return tuple(values)
+
+
+def _resolve_default_ui_version(allowed: tuple[str, ...]) -> str:
+    env_default = _normalize_ui_version(os.getenv("DOUYIN_WEB_UI_DEFAULT", "v1"))
+    if env_default in allowed:
+        return env_default
+    if "v1" in allowed:
+        return "v1"
+    return allowed[0]
+
+
+UI_ALLOWED_VERSIONS = _parse_allowed_ui_versions()
+UI_DEFAULT_VERSION = _resolve_default_ui_version(UI_ALLOWED_VERSIONS)
+APP_STARTED_AT = time.time()
 
 
 app = FastAPI(title="DouyinLiveRecorder API", version="0.1.0")
@@ -32,6 +78,162 @@ recorder_service = FfmpegRecordingService(runtime_config_service, default_downlo
 probe_stop_event = Event()
 probe_thread: Thread | None = None
 logger = logging.getLogger(__name__)
+
+
+def _build_runtime_metrics() -> dict[str, Any]:
+    sampled_at = int(time.time())
+    uptime_seconds = max(0, int(time.time() - APP_STARTED_AT))
+
+    metrics: dict[str, Any] = {
+        "uptime": {
+            "raw": uptime_seconds,
+            "unit": "second",
+            "sampled_at": sampled_at,
+            "available": True,
+        }
+    }
+
+    disk_target = DOWNLOADS_PATH if DOWNLOADS_PATH.exists() else BASE_DIR
+    try:
+        usage = shutil.disk_usage(disk_target)
+        total_gib = usage.total / (1024 ** 3)
+        used_gib = usage.used / (1024 ** 3)
+        free_gib = usage.free / (1024 ** 3)
+        usage_ratio = (used_gib / total_gib) if total_gib > 0 else 0.0
+        metrics["disk"] = {
+            "raw": {
+                "used_gib": used_gib,
+                "total_gib": total_gib,
+                "free_gib": free_gib,
+                "usage_ratio": usage_ratio,
+            },
+            "unit": "GiB",
+            "sampled_at": sampled_at,
+            "available": True,
+        }
+    except Exception as exc:  # pragma: no cover
+        metrics["disk"] = {
+            "raw": None,
+            "unit": "GiB",
+            "sampled_at": sampled_at,
+            "available": False,
+            "error": str(exc),
+        }
+
+    return metrics
+
+
+def _build_ui_bootstrap_html() -> str:
+    config = {
+        "allowed": list(UI_ALLOWED_VERSIONS),
+        "default": UI_DEFAULT_VERSION,
+        "sessionKey": UI_SESSION_STORAGE_KEY,
+    }
+    config_json = html.escape(json.dumps(config, ensure_ascii=False))
+
+    return f"""<!DOCTYPE html>
+<html lang=\"zh-CN\">
+<head>
+    <meta charset=\"UTF-8\" />
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />
+    <title>DouyinLiveRecorder 控制台</title>
+    <style>
+        body {{
+            margin: 0;
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            font-family: \"IBM Plex Sans SC\", \"Microsoft YaHei\", sans-serif;
+            background: linear-gradient(140deg, #081c2f 0%, #0d2f4a 48%, #15365f 100%);
+            color: #f5f8ff;
+        }}
+        .card {{
+            width: min(560px, calc(100vw - 32px));
+            border-radius: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.22);
+            background: rgba(5, 17, 31, 0.62);
+            padding: 20px;
+            box-sizing: border-box;
+            box-shadow: 0 18px 40px rgba(2, 10, 18, 0.36);
+        }}
+        h1 {{ margin: 0 0 10px; font-size: 22px; }}
+        p {{ margin: 0; color: rgba(245, 248, 255, 0.84); line-height: 1.6; }}
+        .link {{
+            margin-top: 12px;
+            display: inline-block;
+            color: #9be7de;
+            text-decoration: none;
+        }}
+    </style>
+</head>
+<body>
+    <div class=\"card\">
+        <h1>正在进入控制台</h1>
+        <p>系统将根据 URL 参数、会话记忆与环境变量自动选择界面版本。</p>
+        <noscript><a class=\"link\" href=\"/ui/v1\">当前浏览器禁用脚本，点击进入旧版界面</a></noscript>
+    </div>
+    <script id=\"ui-config\" type=\"application/json\">{config_json}</script>
+    <script>
+        (function () {{
+            var configEl = document.getElementById('ui-config');
+            if (!configEl) {{
+                window.location.replace('/ui/v1');
+                return;
+            }}
+
+            var config = {{ allowed: ['v1'], default: 'v1', sessionKey: 'douyin_live_recorder_ui_version' }};
+            try {{
+                config = JSON.parse(configEl.textContent || '{}');
+            }} catch (e) {{
+                window.location.replace('/ui/v1');
+                return;
+            }}
+
+            var allowedSet = new Set(Array.isArray(config.allowed) ? config.allowed : ['v1']);
+            var sessionKey = String(config.sessionKey || 'douyin_live_recorder_ui_version');
+            var params = new URLSearchParams(window.location.search);
+            var requested = String(params.get('ui') || '').trim().toLowerCase();
+            var selected = '';
+
+            if (allowedSet.has(requested)) {{
+                selected = requested;
+                try {{
+                    sessionStorage.setItem(sessionKey, selected);
+                }} catch (e) {{
+                }}
+            }}
+
+            if (!selected) {{
+                try {{
+                    var remembered = String(sessionStorage.getItem(sessionKey) || '').trim().toLowerCase();
+                    if (allowedSet.has(remembered)) {{
+                        selected = remembered;
+                    }}
+                }} catch (e) {{
+                }}
+            }}
+
+            if (!selected) {{
+                var fallback = String(config.default || '').trim().toLowerCase();
+                if (allowedSet.has(fallback)) {{
+                    selected = fallback;
+                }}
+            }}
+
+            if (!selected) {{
+                selected = allowedSet.has('v1') ? 'v1' : ((Array.isArray(config.allowed) && config.allowed[0]) || 'v1');
+            }}
+
+            params.delete('ui');
+            var passthrough = params.toString();
+            var query = passthrough ? ('?' + passthrough) : '';
+            var target = selected === 'v2' ? '/ui/v2' : '/ui/v1';
+            window.location.replace(target + query);
+        }})();
+    </script>
+</body>
+</html>
+"""
 
 
 def _normalize_task_id(task_id: str) -> str:
@@ -297,7 +499,18 @@ def get_summary() -> dict:
 @app.get("/api/v1/dashboard")
 def get_dashboard(platform: str | None = Query(default=None)) -> dict:
     _refresh_runtime_config()
-    return manager.get_dashboard(platform=platform)
+    payload = manager.get_dashboard(platform=platform)
+    payload["metrics"] = _build_runtime_metrics()
+    return payload
+
+
+@app.get("/api/v1/ui-version")
+def get_ui_version_config() -> dict[str, Any]:
+    return {
+        "allowed": list(UI_ALLOWED_VERSIONS),
+        "default": UI_DEFAULT_VERSION,
+        "session_key": UI_SESSION_STORAGE_KEY,
+    }
 
 
 @app.get("/api/v1/config/settings")
@@ -330,7 +543,19 @@ if INDEX_FILE.exists():
 
 
 @app.get("/")
-def index() -> FileResponse:
+def index() -> HTMLResponse:
+    return HTMLResponse(_build_ui_bootstrap_html())
+
+
+@app.get("/ui/v1")
+def index_v1() -> FileResponse:
     if not INDEX_FILE.exists():
         raise HTTPException(status_code=404, detail="index file not found")
     return FileResponse(INDEX_FILE)
+
+
+@app.get("/ui/v2")
+def index_v2() -> FileResponse:
+    if not V2_INDEX_FILE.exists():
+        raise HTTPException(status_code=404, detail="v2 index file not found, please build frontend assets")
+    return FileResponse(V2_INDEX_FILE)
